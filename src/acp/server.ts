@@ -9,7 +9,7 @@ import { streamText, stepCountIs, type ToolSet } from "ai"
 import { Boot } from "../boot"
 import { MCP } from "../mcp"
 import { Instance } from "../project/instance"
-import { buildBuiltinTools } from "./builtin-tools"
+import { buildBuiltinTools, decodeToolOutput } from "./builtin-tools"
 
 const PROTOCOL_VERSION = "0.1.0"
 
@@ -51,7 +51,7 @@ export class ACPServer {
   onNotification?: (msg: unknown) => void
 
   /** Create ACP callbacks wired to writeACP */
-  createCallbacks(): ProcessorCallbacks {
+  createCallbacks(workspace: string): ProcessorCallbacks {
     const self = this
     return {
       onTextDelta(sessionId: string, text: string) {
@@ -63,11 +63,12 @@ export class ACPServer {
         self._notify(msg)
       },
       onToolCall(sessionId: string, toolCallId: string, name: string, input: Record<string, unknown>) {
-        const msg = ACP.toolCall(sessionId, toolCallId, name, input)
+        const msg = ACP.toolCall(sessionId, toolCallId, name, input, workspace)
         self._notify(msg)
       },
       onToolResult(sessionId: string, toolCallId: string, status: "completed" | "failed", output: unknown) {
-        const msg = ACP.toolCallUpdate(sessionId, toolCallId, status, output)
+        const { output: rawOutput, diff } = decodeToolOutput(output)
+        const msg = ACP.toolCallUpdate(sessionId, toolCallId, status, rawOutput, diff)
         self._notify(msg)
       },
     }
@@ -203,6 +204,8 @@ export class ACPServer {
       })
       .catch((err) => {
         console.error(`[acp] agent loop error for ${sessionId}:`, err)
+        // Surface the error as a visible message before sending stopReason
+        this._notify(ACP.messageChunk(sessionId, `\n[Agent error: ${err.message}]\n`))
         this._notify(ACP.response(requestId, { stopReason: "error", error: err.message }))
       })
       .finally(() => {
@@ -289,7 +292,7 @@ export class ACPServer {
       })
     }
 
-    const callbacks = this.createCallbacks()
+    const callbacks = this.createCallbacks(session.workspace)
 
     // Get the language model from meta
     const language = Provider.fromMeta(providerMeta)
@@ -306,14 +309,14 @@ export class ACPServer {
     // Get tools from MCP and built-ins, merge them
     const [mcpTools, builtinTools] = await Promise.all([
       MCP.tools().catch(() => ({} as ToolSet)),
-      buildBuiltinTools(signal),
+      buildBuiltinTools(signal, session.workspace),
     ])
     const allTools: ToolSet = { ...builtinTools, ...mcpTools }
 
     // Build system prompt
     const systemParts: string[] = []
     if (agent.prompt) systemParts.push(agent.prompt)
-    systemParts.push(`You are working in directory: ${session.workspace}`)
+    systemParts.push(`You are working in the project root directory. The absolute path is ${session.workspace}, but always refer to files using relative paths (e.g. "README.md", "src/main.rs") — never use the full absolute path in your responses.`)
     systemParts.push(`Current date: ${new Date().toISOString().split("T")[0]}`)
 
     // Stream with Vercel AI SDK
@@ -353,6 +356,7 @@ export class ACPServer {
 
         case "error":
           console.error("[acp] stream error:", event.error)
+          callbacks.onTextDelta(sessionId, `\n[Error: ${(event.error as any)?.message ?? String(event.error)}]\n`)
           break
       }
     }

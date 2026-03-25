@@ -94,12 +94,47 @@ export namespace ACP {
     }
   }
 
+  /** Extract a human-readable title from tool name + input args */
+  export function toolTitle(toolName: string, rawInput: Record<string, unknown>, workspace?: string): string {
+    // For MCP tools (contain underscore namespacing), just show the tool name
+    if (toolName.includes("_mcp_") || toolName.startsWith("mcp_")) return toolName
+
+    // Strip workspace prefix from absolute paths for readability
+    const rel = (p: string) => {
+      if (!p) return p
+      if (workspace && p.startsWith(workspace)) {
+        return p.slice(workspace.length).replace(/^\//, "") || p
+      }
+      return p
+    }
+
+    const path = rel((rawInput.filePath ?? rawInput.path ?? rawInput.file ?? "") as string)
+    const pattern = (rawInput.pattern ?? rawInput.glob ?? rawInput.query ?? "") as string
+    const cmd = (rawInput.command ?? "") as string
+
+    switch (toolName) {
+      case "bash": return cmd ? `bash: ${String(cmd).slice(0, 60)}` : "bash"
+      case "read": return path || "read"
+      case "write": return path || "write"
+      case "edit": return path || "edit"
+      case "multiedit": return path || "multiedit"
+      case "glob": return pattern || path || "glob"
+      case "grep": return pattern ? `grep: ${String(pattern).slice(0, 40)}` : "grep"
+      case "webfetch": return (rawInput.url as string) || "webfetch"
+      case "websearch": return (rawInput.query as string) || "websearch"
+      case "codesearch": return pattern || "codesearch"
+      case "apply_patch": return path || "apply_patch"
+      default: return toolName
+    }
+  }
+
   /** Create tool_call notification (when tool starts) */
   export function toolCall(
     sessionId: string,
     toolCallId: string,
     toolName: string,
     rawInput: Record<string, unknown>,
+    workspace?: string,
     meta?: Partial<UpdateMeta>,
   ) {
     return {
@@ -110,7 +145,7 @@ export namespace ACP {
         update: {
           sessionUpdate: "tool_call",
           toolCallId,
-          title: toolName,
+          title: toolTitle(toolName, rawInput, workspace),
           kind: toolKind(toolName),
           status: "pending",
           rawInput,
@@ -129,9 +164,11 @@ export namespace ACP {
     toolCallId: string,
     status: "completed" | "failed",
     rawOutput: unknown,
+    diff?: { type: "diff"; path: string; oldText?: string; newText: string },
     meta?: Partial<UpdateMeta>,
   ) {
     const outputText = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput)
+    const content = diff ? [diff] : [{ type: "text", text: outputText }]
     return {
       jsonrpc: "2.0" as const,
       method: "session/update",
@@ -142,7 +179,7 @@ export namespace ACP {
           toolCallId,
           status,
           rawOutput,
-          content: [{ type: "text", text: outputText }],
+          content,
         },
         _meta: { ...DEFAULT_META, ...meta },
       },
