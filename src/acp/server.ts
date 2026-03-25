@@ -5,10 +5,11 @@ import { ACP } from "./protocol"
 import { writeACP, readStdin } from "./stdio"
 import { Provider, type ProviderMeta } from "../provider/provider"
 import { Agent } from "../agent/agent"
-import { streamText, type ToolSet } from "ai"
+import { streamText, stepCountIs, type ToolSet } from "ai"
 import { Boot } from "../boot"
 import { MCP } from "../mcp"
 import { Instance } from "../project/instance"
+import { buildBuiltinTools } from "./builtin-tools"
 
 const PROTOCOL_VERSION = "0.1.0"
 
@@ -39,7 +40,7 @@ export interface ProcessorCallbacks {
   onTextDelta: (sessionId: string, text: string) => void
   onThinkingDelta: (sessionId: string, text: string) => void
   onToolCall: (sessionId: string, toolCallId: string, name: string, input: Record<string, unknown>) => void
-  onToolResult: (sessionId: string, toolCallId: string, status: "completed" | "failed", output: unknown, content: unknown[]) => void
+  onToolResult: (sessionId: string, toolCallId: string, status: "completed" | "failed", output: unknown) => void
 }
 
 export class ACPServer {
@@ -65,8 +66,8 @@ export class ACPServer {
         const msg = ACP.toolCall(sessionId, toolCallId, name, input)
         self._notify(msg)
       },
-      onToolResult(sessionId: string, toolCallId: string, status: "completed" | "failed", output: unknown, content: unknown[]) {
-        const msg = ACP.toolCallUpdate(sessionId, toolCallId, status, output, content)
+      onToolResult(sessionId: string, toolCallId: string, status: "completed" | "failed", output: unknown) {
+        const msg = ACP.toolCallUpdate(sessionId, toolCallId, status, output)
         self._notify(msg)
       },
     }
@@ -302,8 +303,12 @@ export class ACPServer {
       .filter(Boolean)
       .join("\n")
 
-    // Get tools from MCP
-    const mcpTools = await MCP.tools().catch(() => ({} as ToolSet))
+    // Get tools from MCP and built-ins, merge them
+    const [mcpTools, builtinTools] = await Promise.all([
+      MCP.tools().catch(() => ({} as ToolSet)),
+      buildBuiltinTools(signal),
+    ])
+    const allTools: ToolSet = { ...builtinTools, ...mcpTools }
 
     // Build system prompt
     const systemParts: string[] = []
@@ -316,7 +321,8 @@ export class ACPServer {
       model: language,
       system: systemParts.join("\n\n"),
       messages: [{ role: "user", content: userText }],
-      tools: mcpTools,
+      tools: allTools,
+      stopWhen: stepCountIs(50),
       abortSignal: signal,
     })
 
@@ -338,23 +344,11 @@ export class ACPServer {
           break
 
         case "tool-result":
-          callbacks.onToolResult(
-            sessionId,
-            event.toolCallId,
-            "completed",
-            event.output,
-            [{ type: "content", content: { type: "text", text: String(event.output) } }],
-          )
+          callbacks.onToolResult(sessionId, event.toolCallId, "completed", event.output)
           break
 
         case "tool-error":
-          callbacks.onToolResult(
-            sessionId,
-            event.toolCallId,
-            "failed",
-            String(event.error),
-            [{ type: "content", content: { type: "text", text: String(event.error) } }],
-          )
+          callbacks.onToolResult(sessionId, event.toolCallId, "failed", String(event.error))
           break
 
         case "error":

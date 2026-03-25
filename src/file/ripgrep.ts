@@ -11,7 +11,10 @@ import { Process } from "../util/process"
 import { which } from "../util/which"
 import { text } from "node:stream/consumers"
 
-import { ZipReader, BlobReader, BlobWriter } from "@zip.js/zip.js"
+// zip.js only needed on Windows for rg download; container has rg pre-installed via apk
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+let ZipReader: any, BlobReader: any, BlobWriter: any
+try { ({ ZipReader, BlobReader, BlobWriter } = require("@zip.js/zip.js")) } catch {}
 import { Log } from "@/util/log"
 
 export namespace Ripgrep {

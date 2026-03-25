@@ -129,9 +129,9 @@ export namespace ACP {
     toolCallId: string,
     status: "completed" | "failed",
     rawOutput: unknown,
-    content: unknown[],
     meta?: Partial<UpdateMeta>,
   ) {
+    const outputText = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput)
     return {
       jsonrpc: "2.0" as const,
       method: "session/update",
@@ -141,8 +141,8 @@ export namespace ACP {
           sessionUpdate: "tool_call_update",
           toolCallId,
           status,
-          rawOutput: { result: rawOutput },
-          content,
+          rawOutput,
+          content: [{ type: "text", text: outputText }],
         },
         _meta: { ...DEFAULT_META, ...meta },
       },
