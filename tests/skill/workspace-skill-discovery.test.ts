@@ -46,6 +46,10 @@ describe("workspace skill discovery", () => {
         description: "Use when numerical or experimental work needs an explicit objective and plan.",
       },
       {
+        name: "self-audit-loop",
+        description: "Use when claims, derivations, or experimental conclusions need a rigid audit for counterexamples, failure regions, and overreach before stronger conclusions are accepted.",
+      },
+      {
         name: "numerical-experimentation",
         description: "Use when numerical work needs reproducible experiments, retained anomalies, and report-ready evidence.",
       },
@@ -102,6 +106,7 @@ describe("workspace skill discovery", () => {
       "report-writing",
       "research-planning",
       "result-validation",
+      "self-audit-loop",
     ])
   })
 

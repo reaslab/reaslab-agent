@@ -13,6 +13,7 @@ const problemAnalysisPath = path.join(workspace, "skills", "problem-analysis", "
 const mathematicalModelingPath = path.join(workspace, "skills", "mathematical-modeling", "SKILL.md")
 const derivationAndProofCheckingPath = path.join(workspace, "skills", "derivation-and-proof-checking", "SKILL.md")
 const researchPlanningPath = path.join(workspace, "skills", "research-planning", "SKILL.md")
+const selfAuditLoopPath = path.join(workspace, "skills", "self-audit-loop", "SKILL.md")
 const numericalExperimentationPath = path.join(workspace, "skills", "numerical-experimentation", "SKILL.md")
 const resultValidationPath = path.join(workspace, "skills", "result-validation", "SKILL.md")
 const reportWritingPath = path.join(workspace, "skills", "report-writing", "SKILL.md")
@@ -145,6 +146,42 @@ describe("repository skill bundle", () => {
     })
   })
 
+  test("repository bundle exposes the self audit stage skill", async () => {
+    await Boot.init(workspace)
+
+    await Instance.provide({
+      directory: workspace,
+      fn: async () => {
+        const available = await Skill.available()
+        const selfAuditLoop = available.find((skill) => skill.name === "self-audit-loop")
+
+        expect(selfAuditLoop).toBeDefined()
+        expect(selfAuditLoop?.location).toBe(selfAuditLoopPath)
+
+        const tool = await SkillTool.init()
+        const result = await tool.execute(
+          { name: "self-audit-loop" },
+          {
+            sessionID,
+            messageID,
+            agent: "build",
+            abort: AbortSignal.timeout(30000),
+            messages: [],
+            metadata() {},
+            ask: async () => {},
+          },
+        )
+
+        expect(result.output).toContain("<skill_content name=\"self-audit-loop\">")
+        expect(result.output).toContain("## Hard rules")
+        expect(result.metadata).toMatchObject({
+          name: "self-audit-loop",
+          dir: path.dirname(selfAuditLoopPath),
+        })
+      },
+    })
+  })
+
   test("repository bundle exposes experimentation and validation stage skills", async () => {
     await Boot.init(workspace)
 
@@ -181,6 +218,49 @@ describe("repository skill bundle", () => {
           name: "result-validation",
           dir: path.dirname(resultValidationPath),
         })
+      },
+    })
+  })
+
+  test("repository-backed loaded skill content exposes second-wave validation handoffs", async () => {
+    await Boot.init(workspace)
+
+    await Instance.provide({
+      directory: workspace,
+      fn: async () => {
+        const tool = await SkillTool.init()
+        const mathflow = await tool.execute(
+          { name: "mathflow" },
+          {
+            sessionID,
+            messageID,
+            agent: "build",
+            abort: AbortSignal.timeout(30000),
+            messages: [],
+            metadata() {},
+            ask: async () => {},
+          },
+        )
+        const resultValidation = await tool.execute(
+          { name: "result-validation" },
+          {
+            sessionID,
+            messageID,
+            agent: "build",
+            abort: AbortSignal.timeout(30000),
+            messages: [],
+            metadata() {},
+            ask: async () => {},
+          },
+        )
+
+        expect(mathflow.output).toContain("`result-validation` prepares work for audit")
+        expect(mathflow.output).toContain("`self-audit-loop` is the final skepticism gate before `report-writing`")
+        expect(mathflow.output).toContain("route back to `mathematical-modeling`, `derivation-and-proof-checking`, `research-planning`, or `numerical-experimentation`")
+
+        expect(resultValidation.output).toContain("special cases, limit cases, sensitivity checks, and consistency checks")
+        expect(resultValidation.output).toContain("Hand off to `self-audit-loop` before strong final conclusions and `report-writing`.")
+        expect(resultValidation.output).not.toContain("do not split it into a separate self-audit loop")
       },
     })
   })

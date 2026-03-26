@@ -1,6 +1,6 @@
 ---
 name: result-validation
-description: Use when analytical or numerical findings need explicit validation against special cases, limit cases, sensitivity, consistency checks, and a first-wave audit before making strong claims.
+description: Use when analytical or numerical findings need explicit validation against special cases, limit cases, sensitivity, and consistency checks so the work is ready for second-wave audit before strong claims.
 ---
 
 ## Use when
@@ -25,17 +25,17 @@ Typical signals:
 
 - A validation record covering special cases, limit cases, sensitivity checks, and consistency checks.
 - An explicit statement of which claims remain supported, weakened, contradicted, or still unresolved.
-- A completed first-wave audit checklist named `Claim Integrity Audit`.
-- A final claim-strength statement that distinguishes tentative observations from strong claims.
+- A completed validation checklist named `Claim Integrity Audit`.
+- A handoff to `self-audit-loop` before strong final conclusions and `report-writing`.
 
 ## Hard rules
 
 - Check special cases, limit cases, sensitivity, and consistency before endorsing a result as reliable.
 - Search for counterexamples and contradictory evidence instead of only confirming the preferred interpretation.
-- Complete the `Claim Integrity Audit` before making any strong claim.
-- Strong claims require both positive validation findings and a completed `Claim Integrity Audit`.
+- Complete the `Claim Integrity Audit` before handing the work to `self-audit-loop`.
+- Do not treat this skill as the terminal standalone audit stage in second-wave mode.
+- Hand off to `self-audit-loop` before strong final conclusions and `report-writing`.
 - If validation exposes instability, assumption drift, or unresolved contradictions, weaken the claim explicitly.
-- Keep the first-wave audit gate inside this skill; do not split it into a separate self-audit loop.
 
 ## Validation process
 
@@ -45,7 +45,8 @@ Typical signals:
 4. Run sensitivity checks on parameters, tolerances, seeds where applicable, discretization choices, and method settings.
 5. Run consistency checks across independent derivations, units, monotonicity expectations, conservation properties, or baseline comparisons.
 6. Search actively for counterexamples, contradictory runs, or definitions that no longer match the original claim.
-7. Complete the audit checklist and only then decide claim strength.
+7. Complete the audit checklist and state the current claim strength provisionally.
+8. Hand off the result to `self-audit-loop` before any strong final conclusion or `report-writing`.
 
 ## Claim Integrity Audit
 
@@ -68,9 +69,10 @@ Complete every item explicitly:
 
 - `Tentative observation`: some evidence supports the finding, but validation is incomplete or mixed.
 - `Supported claim`: the result survives the main validation checks within the tested regime, with clear caveats.
-- `Strong claim`: validation findings are positive, the `Claim Integrity Audit` is complete, and no unresolved contradiction blocks the conclusion.
+- `Strong claim candidate`: validation findings are positive, the `Claim Integrity Audit` is complete, and the work is ready for `self-audit-loop`.
 
 ## Handoff guidance
 
 - Move back to `numerical-experimentation` when validation shows the evidence set is too thin, too selective, or insufficiently reproducible.
 - Move back to `mathematical-modeling` or `derivation-and-proof-checking` when failures point to model mismatch, hidden assumptions, or unsupported analytical steps.
+- Move forward to `self-audit-loop` when the validation record is complete and the work is ready for adversarial final skepticism before `report-writing`.

@@ -16,6 +16,7 @@ const messageID = MessageID.make("msg_runtime_skill_tools")
 const repositoryMathflowPath = path.resolve(import.meta.dir, "../../skills/mathflow/SKILL.md")
 const repositoryProblemAnalysisPath = path.resolve(import.meta.dir, "../../skills/problem-analysis/SKILL.md")
 const repositoryResearchPlanningPath = path.resolve(import.meta.dir, "../../skills/research-planning/SKILL.md")
+const repositorySelfAuditLoopPath = path.resolve(import.meta.dir, "../../skills/self-audit-loop/SKILL.md")
 const repositoryNumericalExperimentationPath = path.resolve(import.meta.dir, "../../skills/numerical-experimentation/SKILL.md")
 const repositoryResultValidationPath = path.resolve(import.meta.dir, "../../skills/result-validation/SKILL.md")
 const repositoryReportWritingPath = path.resolve(import.meta.dir, "../../skills/report-writing/SKILL.md")
@@ -219,6 +220,18 @@ describe("runtime skill tools", () => {
     expectFound(planningCall.result, "research-planning")
   })
 
+  test("skill-finder discovers the repository self audit stage skill", async () => {
+    const workspace = path.resolve(import.meta.dir, "../..")
+
+    const selfAuditCall = await findSkill(workspace, {
+      query: "self-audit-loop",
+      scope: "workspace",
+      workspaceID,
+    })
+
+    expectFound(selfAuditCall.result, "self-audit-loop")
+  })
+
   test("skill-finder discovers repository experimentation and validation stage skills", async () => {
     const workspace = path.resolve(import.meta.dir, "../..")
 
@@ -297,6 +310,30 @@ describe("runtime skill tools", () => {
     })
 
     expectFound(visible.result, "research-planning")
+  })
+
+  test("load-skill loads self-audit-loop from a local path and makes it available in session scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-runtime-tools-"))
+    tempDirs.push(root)
+
+    const loaded = await loadSkill(root, {
+      localPath: repositorySelfAuditLoopPath,
+      workspaceID,
+      sessionID,
+    })
+
+    expect(loaded.result.metadata?.status).toBe("ok")
+    expect(loaded.result.metadata?.scope).toBe("session")
+    expect(loaded.result.metadata?.name).toBe("self-audit-loop")
+
+    const visible = await findSkill(root, {
+      query: "self-audit-loop",
+      scope: "session",
+      workspaceID,
+      sessionID,
+    })
+
+    expectFound(visible.result, "self-audit-loop")
   })
 
   test("load-skill loads result-validation from a local path and makes it available in session scope", async () => {
