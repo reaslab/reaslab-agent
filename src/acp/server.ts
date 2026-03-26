@@ -254,9 +254,33 @@ export class ACPServer {
                 this._notify(ACP.toolCall(sessionId, part.callID, part.tool, (part.state.input ?? {}) as Record<string, unknown>, session.workspace))
               } else if (part.state.status === "completed") {
                 const { output: rawOutput, diff } = decodeToolOutput(part.state.output)
-                this._notify(ACP.toolCallUpdate(sessionId, part.callID, "completed", rawOutput, diff))
+                this._notify(
+                  ACP.toolCallUpdate(
+                    sessionId,
+                    part.callID,
+                    "completed",
+                    rawOutput,
+                    diff,
+                    { workspace: session.workspace },
+                    {
+                      path: (part.state.input?.filePath ?? part.state.input?.path ?? part.state.input?.file ?? "") as string,
+                    },
+                  ),
+                )
               } else if (part.state.status === "error") {
-                this._notify(ACP.toolCallUpdate(sessionId, part.callID, "failed", part.state.error))
+                this._notify(
+                  ACP.toolCallUpdate(
+                    sessionId,
+                    part.callID,
+                    "failed",
+                    { error: part.state.error },
+                    undefined,
+                    { workspace: session.workspace },
+                    {
+                      path: (part.state.input?.filePath ?? part.state.input?.path ?? part.state.input?.file ?? "") as string,
+                    },
+                  ),
+                )
               }
               break
             }

@@ -21,6 +21,20 @@ import { Plugin } from "@/plugin"
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 
+const WORKSPACE_WRITE_PATTERNS = [
+  /(^|[^-])>(?![=])/,
+  />>/,
+  /\btee\b/,
+  /\bmv\b/,
+  /\bcp\b/,
+  /\brm\b/,
+  /\bmkdir\b/,
+  /\btouch\b/,
+  /\bpython(?:3)?\b.*\b(write_text|write_bytes|open\(|Path\()/i,
+  /\bnode\b.*\b(writeFile|appendFile|createWriteStream)/i,
+  /\bbun\b.*\b(write\(|writeFile|createWriteStream)/i,
+]
+
 export const log = Log.create({ service: "bash-tool" })
 
 const resolveWasm = (asset: string) => {
@@ -77,10 +91,22 @@ export const BashTool = Tool.define("bash", async () => {
     }),
     async execute(params, ctx) {
       const cwd = params.workdir || Instance.directory
+      const collaborativeMode = Boolean(ctx.extra?.collaborativeMode)
       if (params.timeout !== undefined && params.timeout < 0) {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
       }
       const timeout = params.timeout ?? DEFAULT_TIMEOUT
+
+      if (collaborativeMode && Filesystem.contains(Instance.directory, cwd)) {
+        const commandText = params.command
+        const mutatesWorkspace = WORKSPACE_WRITE_PATTERNS.some((pattern) => pattern.test(commandText))
+        if (mutatesWorkspace) {
+          throw new Error(
+            "bash cannot modify workspace files in collaborative mode; use write/edit/apply_patch so the system can emit structured tool calls and diffs.",
+          )
+        }
+      }
+
       const tree = await parser().then((p) => p.parse(params.command))
       if (!tree) {
         throw new Error("Failed to parse command")

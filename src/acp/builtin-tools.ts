@@ -55,6 +55,7 @@ function makeCtx(signal: AbortSignal): Tool.Context {
     agent: "default",
     abort: signal,
     callID: undefined,
+    extra: { collaborativeMode: true },
     messages: [],
     metadata: () => {},
     ask: async () => {},
@@ -107,7 +108,7 @@ async function adaptTool(
 
           return output
         } catch (err: any) {
-          return `Error: ${err.message}`
+          throw new Error(err?.message || String(err))
         }
       },
     }),

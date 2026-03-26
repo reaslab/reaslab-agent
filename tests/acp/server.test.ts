@@ -1,8 +1,10 @@
 import { describe, test, expect } from "bun:test"
 import { ACPServer } from "../../src/acp/server"
 import { Bus } from "../../src/bus"
+import { MessageV2 } from "../../src/session/message-v2"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
+import { MessageID, PartID } from "../../src/session/schema"
 import { NamedError } from "@opencode-ai/util/error"
 
 describe("ACPServer", () => {
@@ -305,6 +307,92 @@ describe("ACPServer", () => {
           _meta: {
             source: "mainagent",
             agent_name: "default",
+          },
+        },
+      })
+    } finally {
+      ;(SessionPrompt as any).prompt = originalPrompt
+    }
+  })
+
+  test("session/prompt emits failed tool_call_update for tool errors", async () => {
+    const server = new ACPServer()
+    const notifications: any[] = []
+    server.onNotification = (msg) => notifications.push(msg)
+
+    const sess = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: "/workspace" },
+    })
+
+    const originalPrompt = (SessionPrompt as any).prompt
+    ;(SessionPrompt as any).prompt = async (input: { sessionID: string }) => {
+      await Bus.publish(MessageV2.Event.PartUpdated, {
+        part: {
+          id: PartID.ascending(),
+          messageID: MessageID.ascending(),
+          sessionID: input.sessionID as any,
+          type: "tool",
+          callID: "call-1",
+          tool: "apply_patch",
+          state: {
+            status: "error",
+            input: { filePath: "/workspace/README.md" },
+            error: "apply_patch verification failed: no hunks found",
+            time: { start: Date.now(), end: Date.now() },
+          },
+        },
+      })
+      return undefined
+    }
+
+    try {
+      const result = await server.dispatch({
+        jsonrpc: "2.0",
+        id: "2",
+        method: "session/prompt",
+        params: {
+          sessionId: sess.result.sessionId,
+          prompt: "Hello!",
+          _meta: {
+            model: "test-model",
+            baseUrl: "http://localhost",
+            apiKey: "test-key",
+          },
+        },
+      })
+
+      expect(result.result).toBeNull()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(notifications).toContainEqual({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: sess.result.sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call-1",
+            status: "failed",
+            rawOutput: {
+              error: "apply_patch verification failed: no hunks found",
+            },
+            locations: [{ path: "README.md" }],
+            content: [
+              {
+                type: "content",
+                content: {
+                  type: "text",
+                  text: "apply_patch verification failed: no hunks found",
+                },
+              },
+            ],
+          },
+          _meta: {
+            source: "mainagent",
+            agent_name: "default",
+            workspace: "/workspace",
           },
         },
       })

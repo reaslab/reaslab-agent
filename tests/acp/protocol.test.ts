@@ -29,7 +29,35 @@ describe("ACP Protocol", () => {
     const msg = ACP.toolCallUpdate("sess-1", "call-1", "completed", "ok", [{ type: "text", text: "done" }])
     expect(msg.params.update.sessionUpdate).toBe("tool_call_update")
     expect(msg.params.update.status).toBe("completed")
-    expect(msg.params.update.rawOutput).toEqual({ result: "ok" })
+    expect(msg.params.update.rawOutput).toBe("ok")
+  })
+
+  test("creates failed tool_call_update with structured error content", () => {
+    const msg = ACP.toolCallUpdate(
+      "sess-1",
+      "call-1",
+      "failed",
+      { error: "apply_patch verification failed: no hunks found" },
+      undefined,
+      { workspace: "/workspace" },
+      { path: "/workspace/README.md" },
+    )
+
+    expect(msg.params.update.sessionUpdate).toBe("tool_call_update")
+    expect(msg.params.update.status).toBe("failed")
+    expect(msg.params.update.rawOutput).toEqual({
+      error: "apply_patch verification failed: no hunks found",
+    })
+    expect(msg.params.update.locations).toEqual([{ path: "README.md" }])
+    expect(msg.params.update.content).toEqual([
+      {
+        type: "content",
+        content: {
+          type: "text",
+          text: "apply_patch verification failed: no hunks found",
+        },
+      },
+    ])
   })
 
   test("maps tool names to kinds", () => {

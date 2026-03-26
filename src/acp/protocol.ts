@@ -1,6 +1,8 @@
 // ACP Protocol Types — JSON-RPC 2.0 messages for agent ↔ reaslab-uni communication
 // Reference: math-modeling-agent/src/acp_impl/protocol.py
 
+import { Filesystem } from "@/util/filesystem"
+
 export namespace ACP {
   // --- Tool kind mapping ---
 
@@ -94,36 +96,70 @@ export namespace ACP {
     }
   }
 
+  function relativizeText(text: string, workspace?: string): string {
+    if (!text || !workspace) return text
+
+    const variants = [workspace]
+    try {
+      variants.push(Filesystem.resolve(workspace))
+    } catch {
+      // Keep original workspace only.
+    }
+
+    let result = text
+    for (const variant of new Set(variants.filter(Boolean))) {
+      result = result.replaceAll(`${variant}/`, "")
+      result = result.replaceAll(`${variant}\\`, "")
+    }
+    return result
+  }
+
+  export function relativePath(p: string, workspace?: string): string {
+    if (!p) return p
+    if (!workspace) return p
+
+    if (p.startsWith(workspace)) {
+      return p.slice(workspace.length).replace(/^[/\\]/, "") || p
+    }
+
+    const normalizedWorkspace = Filesystem.resolve(workspace)
+    const normalizedPath = Filesystem.resolve(Filesystem.windowsPath(p))
+    if (!Filesystem.contains(normalizedWorkspace, normalizedPath)) return p
+
+    return normalizedPath.slice(normalizedWorkspace.length).replace(/^[/\\]/, "") || p
+  }
+
+  function textContent(text: string) {
+    return {
+      type: "content",
+      content: {
+        type: "text",
+        text,
+      },
+    }
+  }
+
   /** Extract a human-readable title from tool name + input args */
   export function toolTitle(toolName: string, rawInput: Record<string, unknown>, workspace?: string): string {
     // For MCP tools (contain underscore namespacing), just show the tool name
     if (toolName.includes("_mcp_") || toolName.startsWith("mcp_")) return toolName
 
-    // Strip workspace prefix from absolute paths for readability
-    const rel = (p: string) => {
-      if (!p) return p
-      if (workspace && p.startsWith(workspace)) {
-        return p.slice(workspace.length).replace(/^\//, "") || p
-      }
-      return p
-    }
-
-    const path = rel((rawInput.filePath ?? rawInput.path ?? rawInput.file ?? "") as string)
+    const filePath = relativePath((rawInput.filePath ?? rawInput.path ?? rawInput.file ?? "") as string, workspace)
     const pattern = (rawInput.pattern ?? rawInput.glob ?? rawInput.query ?? "") as string
-    const cmd = (rawInput.command ?? "") as string
+    const cmd = relativizeText((rawInput.command ?? "") as string, workspace)
 
     switch (toolName) {
       case "bash": return cmd ? `bash: ${String(cmd).slice(0, 60)}` : "bash"
-      case "read": return path || "read"
-      case "write": return path || "write"
-      case "edit": return path || "edit"
-      case "multiedit": return path || "multiedit"
-      case "glob": return pattern || path || "glob"
+      case "read": return filePath || "read"
+      case "write": return filePath || "write"
+      case "edit": return filePath || "edit"
+      case "multiedit": return filePath || "multiedit"
+      case "glob": return pattern || filePath || "glob"
       case "grep": return pattern ? `grep: ${String(pattern).slice(0, 40)}` : "grep"
       case "webfetch": return (rawInput.url as string) || "webfetch"
       case "websearch": return (rawInput.query as string) || "websearch"
       case "codesearch": return pattern || "codesearch"
-      case "apply_patch": return path || "apply_patch"
+      case "apply_patch": return filePath || "apply_patch"
       default: return toolName
     }
   }
@@ -137,6 +173,7 @@ export namespace ACP {
     workspace?: string,
     meta?: Partial<UpdateMeta>,
   ) {
+    const filePath = relativePath((rawInput.filePath ?? rawInput.path ?? rawInput.file ?? "") as string, workspace)
     return {
       jsonrpc: "2.0" as const,
       method: "session/update",
@@ -151,7 +188,7 @@ export namespace ACP {
           rawInput,
           rawOutput: {},
           content: [] as unknown[],
-          locations: [] as unknown[],
+          locations: filePath ? [{ path: filePath }] : ([] as unknown[]),
         },
         _meta: { ...DEFAULT_META, ...meta },
       },
@@ -166,9 +203,27 @@ export namespace ACP {
     rawOutput: unknown,
     diff?: { type: "diff"; path: string; oldText?: string; newText: string },
     meta?: Partial<UpdateMeta>,
+    location?: { path?: string },
   ) {
-    const outputText = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput)
-    const content = diff ? [diff] : [{ type: "text", text: outputText }]
+    const workspace = typeof meta?.workspace === "string" ? meta.workspace : undefined
+    const normalizedDiff = diff
+      ? {
+          ...diff,
+          path: relativePath(diff.path, workspace),
+        }
+      : undefined
+    const outputText =
+      typeof rawOutput === "string"
+        ? relativizeText(rawOutput, workspace)
+        : typeof rawOutput === "object" && rawOutput !== null && "error" in rawOutput && typeof rawOutput.error === "string"
+          ? relativizeText(rawOutput.error, workspace)
+          : JSON.stringify(rawOutput)
+    const content = normalizedDiff ? [normalizedDiff] : [textContent(outputText)]
+    const locations = location?.path
+      ? [{ path: relativePath(location.path, workspace) }]
+      : normalizedDiff
+        ? [{ path: normalizedDiff.path }]
+        : undefined
     return {
       jsonrpc: "2.0" as const,
       method: "session/update",
@@ -180,6 +235,7 @@ export namespace ACP {
           status,
           rawOutput,
           content,
+          locations,
         },
         _meta: { ...DEFAULT_META, ...meta },
       },

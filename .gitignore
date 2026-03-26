@@ -6,3 +6,4 @@ dist
 data/
 migration/
 .worktrees/
+docs/
