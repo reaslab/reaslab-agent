@@ -26,6 +26,7 @@ import { Log } from "@/util/log"
 import { LspTool } from "./lsp"
 import { Truncate } from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
+import { RuntimeSkillTools, runtimeSkillToolsEnabled } from "./skill-runtime"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 import { Effect, Layer, ServiceMap } from "effect"
@@ -137,6 +138,7 @@ export namespace ToolRegistry {
           WebSearchTool,
           CodeSearchTool,
           SkillTool,
+          ...(runtimeSkillToolsEnabled() ? RuntimeSkillTools : []),
           ApplyPatchTool,
           ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...((cfg as any).experimental?.batch_tool === true ? [BatchTool] : []),

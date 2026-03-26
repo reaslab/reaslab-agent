@@ -57,7 +57,7 @@ export namespace LSP {
   export async function diagnostics(): Promise<Record<string, Diagnostic[]>> { return {} }
   export async function hover(_input: { file: string; line: number; character: number }): Promise<null> { return null }
   export async function workspaceSymbol(_query: string): Promise<Symbol[]> { return [] }
-  export async function documentSymbol(_uri: string): Promise<DocumentSymbol[]> { return [] }
+  export async function documentSymbol(_uri: string): Promise<Array<DocumentSymbol | Symbol>> { return [] }
   export async function definition(_input: { file: string; line: number; character: number }): Promise<null> { return null }
   export async function references(_input: { file: string; line: number; character: number }): Promise<null> { return null }
   export async function implementation(_input: { file: string; line: number; character: number }): Promise<null> { return null }
