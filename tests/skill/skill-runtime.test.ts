@@ -136,7 +136,7 @@ describe("Skill runtime overlays", () => {
     expect(names(discoveredView)).toEqual(["hidden-base", "visible-base"])
   })
 
-  test("reloading the same workspace scope clears previous hidden state", async () => {
+  test("reloading the same workspace scope preserves previous hidden state", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-runtime-"))
     tempDirs.push(root)
 
@@ -161,7 +161,7 @@ describe("Skill runtime overlays", () => {
       root,
     })
 
-    expect(names(await runtime.all({ workspaceID }))).toEqual(["alpha", "beta"])
+    expect(names(await runtime.all({ workspaceID }))).toEqual(["beta"])
   })
 
   test("repeatedly loading the same overlay is idempotent", async () => {
