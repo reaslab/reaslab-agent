@@ -1120,12 +1120,7 @@ export namespace SessionPrompt {
                   if (start === end) {
                     const symbols = await LSP.documentSymbol(filePathURI).catch(() => [])
                     for (const symbol of symbols) {
-                      let range: LSP.Range | undefined
-                      if ("range" in symbol) {
-                        range = symbol.range
-                      } else if ("location" in symbol) {
-                        range = symbol.location.range
-                      }
+                      const range = symbol.range
                       if (range?.start?.line && range?.start?.line === start) {
                         start = range.start.line
                         end = range?.end?.line ?? start

@@ -26,9 +26,8 @@ const FILE_WRITE_TOOLS = new Set(["write", "edit", "multiedit", "apply_patch"])
 /** Sentinel prefix for encoded diff appended to tool output string */
 const DIFF_SENTINEL = "\x00DIFF\x00"
 
-/** Structured result carrying optional diff info for reaslab collaborative editor sync */
+/** Structured diff info carrying optional reaslab collaborative editor sync payload */
 export interface ToolResult {
-  output: string
   diff?: { type: "diff"; path: string; oldText?: string; newText: string }
 }
 
@@ -73,16 +72,17 @@ async function adaptTool(
   info: Tool.Info,
   signal: AbortSignal,
   workspace: string,
-): Promise<{ name: string; tool: ReturnType<typeof tool> }> {
+): Promise<{ name: string; tool: any }> {
   const initialized = await info.init()
   const isFileWriter = FILE_WRITE_TOOLS.has(info.id)
+  const createTool = tool as any
 
   return {
     name: info.id,
-    tool: tool({
+    tool: createTool({
       description: initialized.description,
       parameters: initialized.parameters as any,
-      execute: async (args): Promise<ToolResult> => {
+      execute: async (args: Record<string, unknown>): Promise<string> => {
         const absPath = isFileWriter ? resolveFilePath(info.id, args as any, workspace) : undefined
 
         // Read old content before modification
@@ -100,8 +100,8 @@ async function adaptTool(
             let newText: string | undefined
             try { newText = await fs.readFile(absPath, "utf-8") } catch {}
             if (newText !== undefined) {
-              const diff: ToolResult["diff"] = { type: "diff", path: absPath, oldText, newText }
-              return output + DIFF_SENTINEL + JSON.stringify(diff)
+               const diff: ToolResult["diff"] = { type: "diff", path: absPath, oldText, newText }
+               return output + DIFF_SENTINEL + JSON.stringify(diff)
             }
           }
 
