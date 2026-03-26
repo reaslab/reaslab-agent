@@ -1,4 +1,4 @@
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
+import { createOpenAI } from "@ai-sdk/openai"
 import type { LanguageModel } from "ai"
 import { createHash } from "crypto"
 import { NamedError } from "@opencode-ai/util/error"
@@ -37,13 +37,13 @@ export namespace Provider {
     const cached = cache.get(cacheKey)
     if (cached) return cached
 
-    const provider = createOpenAICompatible({
+    const provider = createOpenAI({
       name: "reaslab",
       baseURL: meta.baseUrl,
       apiKey: meta.apiKey,
     })
 
-    const model = provider.languageModel(meta.model)
+    const model = provider.chat(meta.model)
     cache.set(cacheKey, model)
     return model
   }

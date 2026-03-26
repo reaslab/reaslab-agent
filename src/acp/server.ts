@@ -271,6 +271,12 @@ export class ACPServer {
           else if (partType === "reasoning") this._notify(ACP.thoughtChunk(sessionId, delta))
         })
 
+        const unsubSessionError = Bus.subscribe(Session.Event.Error, (event) => {
+          if (event.properties.sessionID !== sessionId) return
+          const message = event.properties.error?.data?.message || "Unknown error"
+          this._notify(ACP.messageChunk(sessionId, `\n[Agent error: ${message}]\n`))
+        })
+
         try {
           await SessionPrompt.prompt({
             sessionID: sessionId as SessionID,
@@ -281,6 +287,7 @@ export class ACPServer {
         } finally {
           unsubPartUpdated()
           unsubPartDelta()
+          unsubSessionError()
           partTypes.clear()
           delete ACPProviderMeta()[session.id]
         }

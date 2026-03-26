@@ -1,6 +1,9 @@
 import { describe, test, expect } from "bun:test"
 import { ACPServer } from "../../src/acp/server"
+import { Bus } from "../../src/bus"
 import { Session } from "../../src/session"
+import { SessionPrompt } from "../../src/session/prompt"
+import { NamedError } from "@opencode-ai/util/error"
 
 describe("ACPServer", () => {
   test("handles initialize", async () => {
@@ -193,5 +196,120 @@ describe("ACPServer", () => {
         message: `Session is busy: ${sess.result.sessionId}`,
       },
     })
+  })
+
+  test("session/prompt emits visible error chunk when agent loop fails", async () => {
+    const server = new ACPServer()
+    const notifications: any[] = []
+    server.onNotification = (msg) => notifications.push(msg)
+
+    const sess = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: "/workspace" },
+    })
+
+    ;(server as any).executeAgentLoop = async () => {
+      throw new Error("provider failed")
+    }
+
+    const result = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "2",
+      method: "session/prompt",
+      params: {
+        sessionId: sess.result.sessionId,
+        prompt: "Hello!",
+        _meta: {
+          model: "test-model",
+          baseUrl: "http://localhost",
+          apiKey: "test-key",
+        },
+      },
+    })
+
+    expect(result.result).toBeNull()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(notifications).toContainEqual({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: sess.result.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: "\n[Agent error: provider failed]\n",
+          },
+        },
+        _meta: {
+          source: "mainagent",
+          agent_name: "default",
+        },
+      },
+    })
+  })
+
+  test("session/prompt emits visible error chunk when session publishes an internal error", async () => {
+    const server = new ACPServer()
+    const notifications: any[] = []
+    server.onNotification = (msg) => notifications.push(msg)
+
+    const sess = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: "/workspace" },
+    })
+
+    const originalPrompt = (SessionPrompt as any).prompt
+    ;(SessionPrompt as any).prompt = async (input: { sessionID: string }) => {
+      await Bus.publish(Session.Event.Error, {
+        sessionID: input.sessionID,
+        error: new NamedError.Unknown({ message: "provider failed" }).toObject(),
+      })
+      return undefined
+    }
+
+    try {
+      const result = await server.dispatch({
+        jsonrpc: "2.0",
+        id: "2",
+        method: "session/prompt",
+        params: {
+          sessionId: sess.result.sessionId,
+          prompt: "Hello!",
+          _meta: {
+            model: "test-model",
+            baseUrl: "http://localhost",
+            apiKey: "test-key",
+          },
+        },
+      })
+
+      expect(result.result).toBeNull()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(notifications).toContainEqual({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: sess.result.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "\n[Agent error: provider failed]\n",
+            },
+          },
+          _meta: {
+            source: "mainagent",
+            agent_name: "default",
+          },
+        },
+      })
+    } finally {
+      ;(SessionPrompt as any).prompt = originalPrompt
+    }
   })
 })
