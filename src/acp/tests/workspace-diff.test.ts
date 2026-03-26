@@ -157,3 +157,36 @@ describe("WorkspaceDiffer diff detection", () => {
     expect(path.basename(diffs[1].absolutePath)).toBe("b.txt")
   })
 })
+
+describe("WorkspaceDiffer error handling", () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-diff-test-"))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  test("returns [] for non-existent workspace (graceful degradation)", async () => {
+    const { WorkspaceDiffer } = await import("../workspace-diff")
+    const differ = new WorkspaceDiffer()
+    await differ.snapshot("/nonexistent/path/that/does/not/exist")
+    const diffs = await differ.computeDiffs("/nonexistent/path/that/does/not/exist")
+    expect(diffs).toHaveLength(0)
+  })
+
+  test("content-identical file with changed mtime is not reported", async () => {
+    const file = path.join(tmpDir, "touched.txt")
+    await fs.writeFile(file, "same content")
+    const { WorkspaceDiffer } = await import("../workspace-diff")
+    const differ = new WorkspaceDiffer()
+    await differ.snapshot(tmpDir)
+    // Change mtime but keep content identical
+    const future = new Date(Date.now() + 5000)
+    await fs.utimes(file, future, future)
+    const diffs = await differ.computeDiffs(tmpDir)
+    expect(diffs).toHaveLength(0)
+  })
+})
