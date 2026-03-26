@@ -42,6 +42,21 @@ export interface JsonRpcRequest {
   params?: Record<string, unknown>
 }
 
+type PromptInputPart =
+  | { type: "text"; text: string }
+  | { type: "file"; url: string; filename: string; mime: string }
+
+type PromptInvocation =
+  | {
+      type: "prompt"
+      parts: PromptInputPart[]
+    }
+  | {
+      type: "command"
+      command: string
+      arguments: string
+    }
+
 export class ACPServer {
   private sessions = new Map<string, SessionState>()
 
@@ -201,8 +216,51 @@ export class ACPServer {
 
   // --- Prompt parsing ---
 
+  private resolvePromptInvocation(prompt: string | unknown[]): PromptInvocation {
+    if (typeof prompt !== "string") {
+      return {
+        type: "prompt",
+        parts: this.parsePromptToInputParts(prompt),
+      }
+    }
+
+    if (!prompt.startsWith("/")) {
+      return {
+        type: "prompt",
+        parts: this.parsePromptToInputParts(prompt),
+      }
+    }
+
+    const newlineIndex = prompt.indexOf("\n")
+    const firstLine = newlineIndex === -1 ? prompt : prompt.slice(0, newlineIndex)
+    const remaining = newlineIndex === -1 ? "" : prompt.slice(newlineIndex + 1)
+    const withoutSlash = firstLine.slice(1)
+    const firstWhitespace = withoutSlash.search(/\s/)
+    const command = firstWhitespace === -1
+      ? withoutSlash
+      : withoutSlash.slice(0, firstWhitespace)
+
+    if (!command) {
+      throw new Error("Empty slash command")
+    }
+
+    const inlineArguments = firstWhitespace === -1
+      ? ""
+      : withoutSlash.slice(firstWhitespace).trimStart()
+
+    return {
+      type: "command",
+      command,
+      arguments: remaining
+        ? inlineArguments
+          ? `${inlineArguments}\n${remaining}`
+          : remaining
+        : inlineArguments,
+    }
+  }
+
   /** Parse ACP prompt content blocks into SessionPrompt input parts */
-  parsePromptToInputParts(prompt: string | unknown[]): Array<{ type: "text"; text: string } | { type: "file"; url: string; filename: string; mime: string }> {
+  parsePromptToInputParts(prompt: string | unknown[]): PromptInputPart[] {
     if (typeof prompt === "string") return [{ type: "text", text: prompt }]
     if (!Array.isArray(prompt)) return [{ type: "text", text: String(prompt) }]
     return prompt.map((block: any) => {
@@ -217,7 +275,7 @@ export class ACPServer {
 
   private async executeAgentLoop(
     session: SessionState,
-    parts: Array<{ type: "text"; text: string } | { type: "file"; url: string; filename: string; mime: string }>,
+    parts: PromptInputPart[],
     providerMeta: ProviderMeta,
     requestId: string | number,
   ): Promise<void> {
