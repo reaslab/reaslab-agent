@@ -301,9 +301,12 @@ export class ACPServer {
           else if (partType === "reasoning") this._notify(ACP.thoughtChunk(sessionId, delta))
         })
 
+        let sessionErrorMessage: string | undefined
+
         const unsubSessionError = Bus.subscribe(Session.Event.Error, (event) => {
           if (event.properties.sessionID !== sessionId) return
           const message = event.properties.error?.data?.message || "Unknown error"
+          sessionErrorMessage = message
           this._notify(ACP.messageChunk(sessionId, `\n[Agent error: ${message}]\n`))
         })
 
@@ -315,9 +318,18 @@ export class ACPServer {
             parts,
           })
 
-          const errorMessage = result.info.role === "assistant"
-            ? result.info.error?.data?.message || result.info.error?.message
-            : undefined
+          const assistantErrorMessage =
+            result &&
+            typeof result === "object" &&
+            "info" in result &&
+            result.info &&
+            typeof result.info === "object" &&
+            "role" in result.info &&
+            result.info.role === "assistant"
+              ? (result.info as any).error?.data?.message || (result.info as any).error?.message
+              : undefined
+
+          const errorMessage = sessionErrorMessage || assistantErrorMessage
 
           if (errorMessage) {
             this._notify(ACP.response(requestId, { stopReason: "error", error: errorMessage }))

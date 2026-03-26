@@ -291,7 +291,13 @@ describe("ACPServer", () => {
       })
 
       expect(result.result).toBeNull()
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      await waitFor(() =>
+        notifications.some(
+          (msg) =>
+            (msg as any).method === "session/update" &&
+            (msg as any).params?.update?.sessionUpdate === "agent_message_chunk",
+        ),
+      )
       expect(notifications).toContainEqual({
         jsonrpc: "2.0",
         method: "session/update",
@@ -308,6 +314,14 @@ describe("ACPServer", () => {
             source: "mainagent",
             agent_name: "default",
           },
+        },
+      })
+      expect(notifications).toContainEqual({
+        jsonrpc: "2.0",
+        id: "2",
+        result: {
+          stopReason: "error",
+          error: "provider failed",
         },
       })
     } finally {
@@ -401,3 +415,12 @@ describe("ACPServer", () => {
     }
   })
 })
+
+async function waitFor(check: () => boolean, timeout = 1000) {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    if (check()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error("Timed out waiting for condition")
+}
