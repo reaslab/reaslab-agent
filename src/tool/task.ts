@@ -11,6 +11,7 @@ import { iife } from "@/util/iife"
 import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { Permission } from "@/permission"
+import { NotFoundError } from "../storage/db"
 
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
@@ -46,6 +47,8 @@ export const TaskTool = Tool.define("task", async (ctx) => {
     parameters,
     async execute(params: z.infer<typeof parameters>, ctx) {
       const config = await Config.get()
+      const agent = await Agent.get(params.subagent_type)
+      if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
 
       // Skip permission check when user explicitly invoked via @ or command subtask
       if (!ctx.extra?.bypassAgentCheck) {
@@ -60,15 +63,30 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         })
       }
 
-      const agent = await Agent.get(params.subagent_type)
-      if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
-
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
 
       const session = await iife(async () => {
         if (params.task_id) {
-          const found = await Session.get(SessionID.make(params.task_id)).catch(() => {})
-          if (found) return found
+          let found
+
+          try {
+            found = await Session.get(SessionID.make(params.task_id))
+          } catch (error) {
+            if (NotFoundError.isInstance(error)) {
+              throw new Error(`Task session not found: ${params.task_id}`)
+            }
+            throw error
+          }
+
+          if (!found.parentID) {
+            throw new Error(`Task session is not a child session: ${params.task_id}`)
+          }
+
+          if (found.parentID !== ctx.sessionID) {
+            throw new Error(`Task session does not belong to current parent session: ${params.task_id}`)
+          }
+
+          return found
         }
 
         return await Session.create({
