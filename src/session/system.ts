@@ -13,8 +13,15 @@ import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
+import type { WorkspaceID } from "@/control-plane/schema"
+import { SessionID } from "@/session/schema"
 
 export namespace SystemPrompt {
+  export type Scope = {
+    workspaceID?: WorkspaceID
+    sessionID?: SessionID
+  }
+
   export function provider(model: Provider.Model) {
     if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
       return [PROMPT_BEAST]
@@ -52,10 +59,17 @@ export namespace SystemPrompt {
     ]
   }
 
-  export async function skills(agent: Agent.Info) {
+  export async function skills(agent: Agent.Info, scope?: Scope) {
     if (Permission.disabled(["skill"], agent.permission).has("skill")) return
 
-    const list = await Skill.available(agent)
+    const base = await Skill.available(agent)
+    const runtime = await Skill.runtimeAll(scope)
+    const merged = new Map(base.map((skill) => [skill.name, skill] as const))
+    for (const skill of runtime) {
+      if (Permission.evaluate("skill", skill.name, agent.permission).action === "deny") continue
+      merged.set(skill.name, skill)
+    }
+    const list = Array.from(merged.values()).toSorted((a, b) => a.name.localeCompare(b.name))
 
     return [
       "Skills provide specialized instructions and workflows for specific tasks.",

@@ -113,6 +113,26 @@ export namespace Skill {
 
   const runtimeState = Instance.state(() => runtimeOverlay())
 
+  const parseInfo = (location: string, md: { data: unknown; content: string }) => {
+    const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
+    if (!parsed.success) {
+      return {
+        success: false as const,
+        error: parsed.error,
+      }
+    }
+
+    return {
+      success: true as const,
+      info: {
+        name: parsed.data.name,
+        description: parsed.data.description,
+        location,
+        content: md.content,
+      } satisfies Info,
+    }
+  }
+
   const add = async (state: State, match: string) => {
     const md = await ConfigMarkdown.parse(match).catch(async (err: any) => {
       const message = (ConfigMarkdown as any).FrontmatterError?.isInstance?.(err)
@@ -126,24 +146,19 @@ export namespace Skill {
 
     if (!md) return
 
-    const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
+    const parsed = parseInfo(match, md)
     if (!parsed.success) return
 
-    if (state.skills[parsed.data.name]) {
+    if (state.skills[parsed.info.name]) {
       log.warn("duplicate skill name", {
-        name: parsed.data.name,
-        existing: state.skills[parsed.data.name].location,
+        name: parsed.info.name,
+        existing: state.skills[parsed.info.name].location,
         duplicate: match,
       })
     }
 
     state.dirs.add(path.dirname(match))
-    state.skills[parsed.data.name] = {
-      name: parsed.data.name,
-      description: parsed.data.description,
-      location: match,
-      content: md.content,
-    }
+    state.skills[parsed.info.name] = parsed.info
   }
 
   const scan = async (state: State, root: string, pattern: string, opts?: { dot?: boolean; scope?: string }) => {
@@ -179,7 +194,7 @@ export namespace Skill {
     })
     if (!md) return
 
-    const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
+    const parsed = parseInfo(location, md)
     if (!parsed.success) {
       if (logErrors) {
         log.warn("invalid runtime skill metadata", { skill: location, issues: parsed.error.issues })
@@ -194,12 +209,7 @@ export namespace Skill {
       return
     }
 
-    return {
-      name: parsed.data.name,
-      description: parsed.data.description,
-      location,
-      content: md.content,
-    } satisfies Info
+    return parsed.info
   }
 
   const scanRuntimeOverlay = async (root: string, file?: string) => {
@@ -260,6 +270,14 @@ export namespace Skill {
 
   const runtimeSourceKey = (params: RuntimeLoadInput) => params.file ?? params.root
 
+  const mergeOverlays = (base: Map<string, Info>, overlays: RuntimeOverlayState[]) => {
+    let result = new Map(base)
+    for (const overlay of overlays) {
+      result = mergeOverlay(result, overlay)
+    }
+    return result
+  }
+
   export function runtimeOverlay(input?: { discovered?: Info[] }): RuntimeOverlay {
     const discovered = new Map((input?.discovered ?? []).map((skill) => [skill.name, skill] as const))
     const discoveredRoots = new Map<string, Map<string, Info>>()
@@ -287,6 +305,20 @@ export namespace Skill {
       return mergeOverlay(merged, session.get(runtimeScopeKey("session", scope)))
     }
 
+    const mergedForSession = (scope: RuntimeScope) => {
+      let result = new Map(discovered)
+      if (scope.workspaceID) {
+        result = mergeOverlay(result, workspace.get(runtimeScopeKey("workspace", scope)))
+        result = mergeOverlay(result, session.get(runtimeScopeKey("session", scope)))
+        return result
+      }
+
+      const overlays = [...session.entries()]
+        .filter(([key]) => key.endsWith(`:${scope.sessionID}`))
+        .map(([, overlay]) => overlay)
+      return mergeOverlays(result, overlays)
+    }
+
     const allKnown = (scope?: RuntimeScope) => {
       let result = new Map(discovered)
       if (!scope?.workspaceID) return result
@@ -311,6 +343,40 @@ export namespace Skill {
         }
       }
 
+      return result
+    }
+
+    const allKnownForSession = (scope: RuntimeScope) => {
+      let result = new Map(discovered)
+      if (scope.workspaceID) {
+        const workspaceState = workspace.get(runtimeScopeKey("workspace", scope))
+        if (workspaceState) {
+          for (const source of workspaceState.sources.values()) {
+            for (const [name, info] of source.skills) {
+              result.set(name, info)
+            }
+          }
+        }
+
+        const sessionState = session.get(runtimeScopeKey("session", scope))
+        if (sessionState) {
+          for (const source of sessionState.sources.values()) {
+            for (const [name, info] of source.skills) {
+              result.set(name, info)
+            }
+          }
+        }
+        return result
+      }
+
+      for (const [key, overlay] of session) {
+        if (!key.endsWith(`:${scope.sessionID}`)) continue
+        for (const source of overlay.sources.values()) {
+          for (const [name, info] of source.skills) {
+            result.set(name, info)
+          }
+        }
+      }
       return result
     }
 
@@ -417,11 +483,27 @@ export namespace Skill {
         }
       },
       all: async (scope?: RuntimeScope, opts?: { includeHidden?: boolean }) =>
-        Array.from((opts?.includeHidden ? allKnown(scope) : merged(scope)).values()).toSorted((a, b) =>
-          a.name.localeCompare(b.name),
-        ),
+        Array.from(
+          (
+            scope?.sessionID && !scope.workspaceID
+              ? opts?.includeHidden
+                ? allKnownForSession(scope)
+                : mergedForSession(scope)
+              : opts?.includeHidden
+                ? allKnown(scope)
+                : merged(scope)
+          ).values(),
+        ).toSorted((a, b) => a.name.localeCompare(b.name)),
       get: async (name: string, scope?: RuntimeScope, opts?: { includeHidden?: boolean }) =>
-        (opts?.includeHidden ? allKnown(scope) : merged(scope)).get(name),
+        (
+          scope?.sessionID && !scope.workspaceID
+            ? opts?.includeHidden
+              ? allKnownForSession(scope)
+              : mergedForSession(scope)
+            : opts?.includeHidden
+              ? allKnown(scope)
+              : merged(scope)
+        ).get(name),
     }
   }
 

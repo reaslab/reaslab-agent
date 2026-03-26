@@ -653,7 +653,10 @@ export namespace SessionPrompt {
       await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
       // Build system prompt, adding structured output instruction if needed
-      const skills = await SystemPrompt.skills(agent)
+      const skills = await SystemPrompt.skills(agent, {
+        workspaceID: session.workspaceID,
+        sessionID,
+      })
       const system = [
         ...(await SystemPrompt.environment(model)),
         ...(skills ? [skills] : []),
@@ -1781,9 +1784,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
   export async function command(input: CommandInput) {
     log.info("command", input)
-    const command = await Command.get(input.command)
+    const session = await Session.get(input.sessionID).catch((error) => {
+      if (NotFoundError.isInstance(error)) return undefined
+      throw error
+    })
+    const command = await Command.get(input.command, {
+      workspaceID: session?.workspaceID,
+      sessionID: input.sessionID,
+    })
     if (!command) {
-      throw new NamedError.Unknown({ message: `Command not found: "${input.command}"` })
+      throw new Error(`Command not found: "${input.command}"`)
     }
     const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
 

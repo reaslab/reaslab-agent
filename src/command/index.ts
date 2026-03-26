@@ -1,4 +1,5 @@
 import { BusEvent } from "@/bus/bus-event"
+import type { WorkspaceID } from "@/control-plane/schema"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRunPromise } from "@/effect/run-service"
 import { SessionID, MessageID } from "@/session/schema"
@@ -65,9 +66,26 @@ export namespace Command {
     REVIEW: "review",
   } as const
 
+  function fromSkill(skill: Skill.Info): Info {
+    return {
+      name: skill.name,
+      description: skill.description,
+      source: "skill",
+      get template() {
+        return skill.content
+      },
+      hints: [],
+    }
+  }
+
+  export type Scope = {
+    workspaceID?: WorkspaceID
+    sessionID?: SessionID
+  }
+
   export interface Interface {
-    readonly get: (name: string) => Effect.Effect<Info | undefined>
-    readonly list: () => Effect.Effect<Info[]>
+    readonly get: (name: string, scope?: Scope) => Effect.Effect<Info | undefined>
+    readonly list: (scope?: Scope) => Effect.Effect<Info[]>
   }
 
   export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Command") {}
@@ -159,14 +177,27 @@ export namespace Command {
 
       const cache = yield* InstanceState.make<State>((ctx) => init(ctx))
 
-      const get = Effect.fn("Command.get")(function* (name: string) {
+      const get = Effect.fn("Command.get")(function* (name: string, scope?: Scope) {
         const state = yield* InstanceState.get(cache)
-        return state.commands[name]
+        const command = state.commands[name]
+        if (command) return command
+        if (!scope?.workspaceID && !scope?.sessionID) return
+        const skill = yield* Effect.promise(() => Skill.runtimeGet(name, scope))
+        if (!skill) return
+        return fromSkill(skill)
       })
 
-      const list = Effect.fn("Command.list")(function* () {
+      const list = Effect.fn("Command.list")(function* (scope?: Scope) {
         const state = yield* InstanceState.get(cache)
-        return Object.values(state.commands)
+        const commands = { ...state.commands }
+        if (!scope?.workspaceID && !scope?.sessionID) {
+          return Object.values(commands)
+        }
+        for (const skill of yield* Effect.promise(() => Skill.runtimeAll(scope))) {
+          if (commands[skill.name]) continue
+          commands[skill.name] = fromSkill(skill)
+        }
+        return Object.values(commands)
       })
 
       return Service.of({ get, list })
@@ -175,11 +206,11 @@ export namespace Command {
 
   const runPromise = makeRunPromise(Service, layer)
 
-  export async function get(name: string) {
-    return runPromise((svc) => svc.get(name))
+  export async function get(name: string, scope?: Scope) {
+    return runPromise((svc) => svc.get(name, scope))
   }
 
-  export async function list() {
-    return runPromise((svc) => svc.list())
+  export async function list(scope?: Scope) {
+    return runPromise((svc) => svc.list(scope))
   }
 }

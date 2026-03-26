@@ -339,4 +339,22 @@ describe("Skill runtime overlays", () => {
     expect(names(await runtime.all())).toEqual(["valid"])
     expect(await runtime.get("invalid")).toBeUndefined()
   })
+
+  test("parseRuntimeInfo keeps shared metadata parsing aligned with discovered skill loading", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-runtime-"))
+    tempDirs.push(root)
+
+    const location = await writeSkill(root, "runtime-shared-parse", {
+      name: "runtime-shared-parse",
+      description: "shared parser skill",
+      body: "Shared parser body",
+    })
+
+    const parsed = await Skill.parseRuntimeInfo(location)
+    const runtime = createRuntime()
+    await runtime.load({ scope: "discovered", root })
+    const loaded = await runtime.get("runtime-shared-parse")
+
+    expect(parsed).toEqual(loaded)
+  })
 })
