@@ -13,7 +13,7 @@ import { SessionPrompt } from "../session/prompt"
 import { MessageV2 } from "../session/message-v2"
 import { Bus } from "../bus"
 import { ACPProviderMeta } from "./provider-meta"
-import type { SessionID } from "../session/schema"
+import { MessageID, type SessionID } from "../session/schema"
 import { WorkspaceDiffer } from "./workspace-diff"
 import path from "path"
 import { Todo } from "../session/todo"
@@ -167,7 +167,7 @@ export class ACPServer {
 
     const meta = (params._meta || params.meta || {}) as Record<string, unknown>
     const prompt = params.prompt as string | unknown[]
-    const parts = this.parsePromptToInputParts(prompt)
+    const invocation = this.resolvePromptInvocation(prompt)
 
     const providerMeta: ProviderMeta = {
       model: (meta.model as string) || "",
@@ -183,7 +183,7 @@ export class ACPServer {
     const abortController = new AbortController()
     session.abortController = abortController
 
-    this.executeAgentLoop(session, parts, providerMeta, requestId)
+    this.executeAgentLoop(session, invocation, providerMeta, requestId)
       .catch((err) => {
         console.error(`[acp] agent loop error for ${sessionId}:`, err)
         if (err instanceof Session.BusyError) {
@@ -276,7 +276,7 @@ export class ACPServer {
 
   private async executeAgentLoop(
     session: SessionState,
-    parts: PromptInputPart[],
+    invocation: PromptInvocation,
     providerMeta: ProviderMeta,
     requestId: string | number,
   ): Promise<void> {
@@ -388,12 +388,7 @@ export class ACPServer {
         })
 
         try {
-          const result = await SessionPrompt.prompt({
-            sessionID: sessionId as SessionID,
-            model: { providerID: "reaslab" as any, modelID: (providerMeta.model || "unknown") as any },
-            agent: "build",
-            parts,
-          })
+          const result = await this.executePromptInvocation(sessionId, invocation, providerMeta)
 
           const assistantErrorMessage =
             result &&
@@ -450,6 +445,30 @@ export class ACPServer {
     })
 
     this._notify(ACP.response(requestId, { stopReason: "end_turn" }))
+  }
+
+  private executePromptInvocation(
+    sessionId: string,
+    invocation: PromptInvocation,
+    providerMeta: ProviderMeta,
+  ) {
+    if (invocation.type === "prompt") {
+      return SessionPrompt.prompt({
+        sessionID: sessionId as SessionID,
+        model: { providerID: "reaslab" as any, modelID: (providerMeta.model || "unknown") as any },
+        agent: "build",
+        parts: invocation.parts,
+      })
+    }
+
+    return SessionPrompt.command({
+      sessionID: sessionId as SessionID,
+      messageID: MessageID.ascending(),
+      command: invocation.command,
+      arguments: invocation.arguments,
+      model: providerMeta.model,
+      agent: "build",
+    })
   }
 
   // --- Main loop ---
