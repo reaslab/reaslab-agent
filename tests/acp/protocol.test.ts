@@ -32,6 +32,23 @@ describe("ACP Protocol", () => {
     expect(msg.params.update.rawOutput).toBe("ok")
   })
 
+  test("creates plan update notifications", () => {
+    const msg = ACP.planUpdate("sess-1", [
+      { content: "Inspect project context", priority: "high", status: "in_progress" },
+      { content: "Write tests", priority: "medium", status: "completed" },
+    ])
+
+    expect(msg.method).toBe("session/update")
+    expect(msg.params.sessionId).toBe("sess-1")
+    expect(msg.params.update).toEqual({
+      sessionUpdate: "plan",
+      entries: [
+        { content: "Inspect project context", priority: "high", status: "in_progress" },
+        { content: "Write tests", priority: "medium", status: "completed" },
+      ],
+    })
+  })
+
   test("maps tool names to kinds", () => {
     expect(ACP.toolKind("write_file")).toBe("edit")
     expect(ACP.toolKind("edit_file")).toBe("edit")
@@ -64,5 +81,15 @@ describe("ACP Protocol", () => {
     const msg = ACP.messageChunk("sess-1", "hi", { agent_name: "build" })
     expect(msg.params._meta.source).toBe("mainagent")
     expect(msg.params._meta.agent_name).toBe("build")
+  })
+
+  test("includes _meta in plan notifications", () => {
+    const msg = ACP.planUpdate("sess-1", [], { agent_name: "build", workspace: "/workspace" })
+
+    expect(msg.params._meta).toEqual({
+      source: "mainagent",
+      agent_name: "build",
+      workspace: "/workspace",
+    })
   })
 })
