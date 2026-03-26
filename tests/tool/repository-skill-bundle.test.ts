@@ -257,6 +257,9 @@ describe("repository skill bundle", () => {
         expect(mathflow.output).toContain("`result-validation` prepares work for audit")
         expect(mathflow.output).toContain("`self-audit-loop` is the final skepticism gate before `report-writing`")
         expect(mathflow.output).toContain("route back to `mathematical-modeling`, `derivation-and-proof-checking`, `research-planning`, or `numerical-experimentation`")
+        expect(mathflow.output).toContain("selects the next needed stage skill on demand")
+        expect(mathflow.output).toContain("one stage at a time")
+        expect(mathflow.output).toContain("not an eager loader for the whole skill family")
 
         expect(resultValidation.output).toContain("special cases, limit cases, sensitivity checks, and consistency checks")
         expect(resultValidation.output).toContain("Hand off to `self-audit-loop` before strong final conclusions and `report-writing`.")

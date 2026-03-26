@@ -277,6 +277,8 @@ describe("runtime skill tools", () => {
     expect(loaded.result.metadata?.status).toBe("ok")
     expect(loaded.result.metadata?.scope).toBe("session")
     expect(loaded.result.metadata?.name).toBe("problem-analysis")
+    expect(loaded.result.output).not.toContain("<skill_content name=\"problem-analysis\">")
+    expect(loaded.result.output).not.toContain("## Hard rules")
 
     const visible = await findSkill(root, {
       query: "problem-analysis",
@@ -286,6 +288,51 @@ describe("runtime skill tools", () => {
     })
 
     expectFound(visible.result, "problem-analysis")
+  })
+
+  test("load-skill registers mathflow without auto-expanding dependent stage skills", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-runtime-tools-"))
+    tempDirs.push(root)
+
+    const loaded = await loadSkill(root, {
+      localPath: repositoryMathflowPath,
+      workspaceID,
+      sessionID,
+    })
+
+    expect(loaded.result.metadata?.status).toBe("ok")
+    expect(loaded.result.metadata?.scope).toBe("session")
+    expect(loaded.result.metadata?.name).toBe("mathflow")
+    expect(loaded.result.output).not.toContain("<skill_content name=\"mathflow\">")
+    expect(loaded.result.output).not.toContain("problem-analysis")
+    expect(loaded.result.output).not.toContain("research-planning")
+
+    const mathflowVisible = await findSkill(root, {
+      query: "mathflow",
+      scope: "session",
+      workspaceID,
+      sessionID,
+    })
+
+    expectFound(mathflowVisible.result, "mathflow")
+
+    const problemAnalysisVisible = await findSkill(root, {
+      query: "problem-analysis",
+      scope: "session",
+      workspaceID,
+      sessionID,
+    })
+
+    expectNotFound(problemAnalysisVisible.result)
+
+    const researchPlanningVisible = await findSkill(root, {
+      query: "research-planning",
+      scope: "session",
+      workspaceID,
+      sessionID,
+    })
+
+    expectNotFound(researchPlanningVisible.result)
   })
 
   test("load-skill loads research-planning from a local path and makes it available in session scope", async () => {

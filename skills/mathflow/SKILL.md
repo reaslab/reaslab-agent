@@ -19,6 +19,8 @@ Use this skill when a task involves mathematical research, derivations, mathemat
 - One required next stage by default.
 - A short ranked candidate set only when stages genuinely overlap and there is real ambiguity.
 - A clear handoff describing what to do in the selected next stage.
+- `mathflow` selects the next needed stage skill on demand, one stage at a time.
+- `mathflow` is not an eager loader for the whole skill family; load only the stage skill needed for the next step.
 
 ## Hard rules
 
@@ -63,6 +65,7 @@ Use this skill when a task involves mathematical research, derivations, mathemat
 
 ## Routing and handoffs
 
+- `mathflow` is a single-step router: it selects the next needed stage skill on demand instead of eager-loading every child skill.
 - A typical second-wave path is `problem-analysis` -> `mathematical-modeling` -> `derivation-and-proof-checking` or `research-planning` -> `numerical-experimentation` -> `result-validation` -> `self-audit-loop` -> `report-writing`, but only the stages required by the actual task should be used.
 - `derivation-and-proof-checking` may follow `mathematical-modeling` directly when the next need is analytical justification rather than numerical execution.
 - `research-planning` feeds `numerical-experimentation`; do not collapse planning and execution into one stage.
