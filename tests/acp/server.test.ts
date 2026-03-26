@@ -160,6 +160,72 @@ describe("ACPServer", () => {
     })
   })
 
+  describe("slash prompt resolution", () => {
+    test("resolves /init as slash command", () => {
+      const server = new ACPServer()
+
+      expect((server as any).resolvePromptInvocation("/init")).toEqual({
+        type: "command",
+        command: "init",
+        arguments: "",
+      })
+    })
+
+    test("resolves /review HEAD~1 as slash command", () => {
+      const server = new ACPServer()
+
+      expect((server as any).resolvePromptInvocation("/review HEAD~1")).toEqual({
+        type: "command",
+        command: "review",
+        arguments: "HEAD~1",
+      })
+    })
+
+    test("resolves multiline slash arguments", () => {
+      const server = new ACPServer()
+
+      expect((server as any).resolvePromptInvocation("/review HEAD~1\nfocus acp")).toEqual({
+        type: "command",
+        command: "review",
+        arguments: "HEAD~1\nfocus acp",
+      })
+    })
+
+    test("returns an empty-command error for slash-only input", () => {
+      const server = new ACPServer()
+
+      expect(() => (server as any).resolvePromptInvocation("/")).toThrow("Empty slash command")
+    })
+
+    test("does not recognize slash commands with leading whitespace", () => {
+      const server = new ACPServer()
+
+      expect((server as any).resolvePromptInvocation(" /init")).toEqual({
+        type: "prompt",
+        parts: [{ type: "text", text: " /init" }],
+      })
+    })
+
+    test("does not recognize plain text as a slash command", () => {
+      const server = new ACPServer()
+
+      expect((server as any).resolvePromptInvocation("hello")).toEqual({
+        type: "prompt",
+        parts: [{ type: "text", text: "hello" }],
+      })
+    })
+
+    test("keeps structured prompt arrays in normal prompt mode", () => {
+      const server = new ACPServer()
+      const prompt = [{ type: "text", text: "/init" }]
+
+      expect((server as any).resolvePromptInvocation(prompt)).toEqual({
+        type: "prompt",
+        parts: [{ type: "text", text: "/init" }],
+      })
+    })
+  })
+
   test("session/prompt sends ACP error notification when session is busy", async () => {
     const server = new ACPServer()
     const notifications: any[] = []
