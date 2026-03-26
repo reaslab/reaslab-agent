@@ -139,6 +139,60 @@ describe("ACPServer", () => {
     })
   })
 
+  test("session/load returns current plan state from persisted session workspace when cwd is overridden", async () => {
+    const server = new ACPServer()
+    const persistedWorkspace = "/tmp/persisted-bootstrap-workspace"
+    const overrideWorkspace = "/tmp/override-bootstrap-workspace"
+
+    const created = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: persistedWorkspace },
+    })
+
+    const sessionId = created.result.sessionId
+
+    await Boot.init(persistedWorkspace)
+    await Instance.provide({
+      directory: persistedWorkspace,
+      fn: async () => {
+        Todo.update({
+          sessionID: sessionId,
+          todos: [
+            {
+              content: "Load from persisted workspace state",
+              status: "in_progress",
+              priority: "high",
+            },
+          ],
+        })
+      },
+    })
+
+    const reloadedServer = new ACPServer()
+    const loaded = await reloadedServer.dispatch({
+      jsonrpc: "2.0",
+      id: "2",
+      method: "session/load",
+      params: { sessionId, cwd: overrideWorkspace },
+    })
+
+    expect(loaded.result).toEqual({
+      sessionId,
+      workspace: overrideWorkspace,
+      plan: {
+        entries: [
+          {
+            content: "Load from persisted workspace state",
+            status: "in_progress",
+            priority: "high",
+          },
+        ],
+      },
+    })
+  })
+
   test("plan entries coexist additively with sessionId and workspace", async () => {
     const server = new ACPServer()
 
@@ -2199,6 +2253,106 @@ describe("ACPServer", () => {
       expect(workspaceSyncUpdates).toHaveLength(1)
       expect(workspaceSyncCalls[0]?.params?.update?.locations).toEqual([{ path: "notes.txt" }])
       expect(workspaceSyncUpdates[0]?.params?.update?.locations).toEqual([{ path: "notes.txt" }])
+    } finally {
+      ;(SessionPrompt as any).prompt = originalPrompt
+      WorkspaceDiffer.prototype.snapshot = originalSnapshot
+      WorkspaceDiffer.prototype.computeDiffs = originalComputeDiffs
+    }
+  })
+
+  test("workspace-sync does not duplicate file diffs when tool emits relative diff paths", async () => {
+    const server = new ACPServer()
+    const notifications: any[] = []
+    server.onNotification = (msg) => notifications.push(msg)
+
+    const sess = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: TEST_WORKSPACE },
+    })
+
+    const sessionId = sess.result.sessionId
+    const originalPrompt = (SessionPrompt as any).prompt
+    const originalSnapshot = WorkspaceDiffer.prototype.snapshot
+    const originalComputeDiffs = WorkspaceDiffer.prototype.computeDiffs
+
+    WorkspaceDiffer.prototype.snapshot = async () => undefined
+    WorkspaceDiffer.prototype.computeDiffs = async () => [
+      {
+        absolutePath: `${TEST_WORKSPACE}/README.md`,
+        oldText: "before",
+        newText: "after",
+      },
+    ]
+
+    ;(SessionPrompt as any).prompt = async (input: { sessionID: string }) => {
+      await Bus.publish(MessageV2.Event.PartUpdated, {
+        part: {
+          id: PartID.ascending(),
+          messageID: MessageID.ascending(),
+          sessionID: input.sessionID as any,
+          type: "tool",
+          callID: "write-call",
+          tool: "write",
+          state: {
+            status: "completed",
+            input: { filePath: "README.md" },
+            metadata: {},
+            title: "README.md",
+            output: `saved\x00DIFF\x00${JSON.stringify({
+              diff: {
+                type: "diff",
+                path: "README.md",
+                oldText: "before",
+                newText: "after",
+              },
+            })}`,
+            time: { start: Date.now(), end: Date.now() },
+          },
+        },
+      })
+      return undefined
+    }
+
+    try {
+      const result = await server.dispatch({
+        jsonrpc: "2.0",
+        id: "2",
+        method: "session/prompt",
+        params: {
+          sessionId,
+          prompt: "Hello!",
+          _meta: {
+            model: "test-model",
+            baseUrl: "http://localhost",
+            apiKey: "test-key",
+          },
+        },
+      })
+
+      expect(result.result).toBeNull()
+      await waitFor(() =>
+        notifications.some(
+          (msg) => msg?.id === "2" && msg?.result?.stopReason === "end_turn",
+        ),
+      )
+
+      const workspaceSyncCalls = notifications.filter(
+        (msg) =>
+          msg?.method === "session/update" &&
+          msg?.params?.update?.sessionUpdate === "tool_call" &&
+          String(msg?.params?.update?.toolCallId || "").startsWith("ws-sync-"),
+      )
+      const workspaceSyncUpdates = notifications.filter(
+        (msg) =>
+          msg?.method === "session/update" &&
+          msg?.params?.update?.sessionUpdate === "tool_call_update" &&
+          String(msg?.params?.update?.toolCallId || "").startsWith("ws-sync-"),
+      )
+
+      expect(workspaceSyncCalls).toHaveLength(0)
+      expect(workspaceSyncUpdates).toHaveLength(0)
     } finally {
       ;(SessionPrompt as any).prompt = originalPrompt
       WorkspaceDiffer.prototype.snapshot = originalSnapshot

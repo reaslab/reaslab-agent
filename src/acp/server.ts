@@ -21,9 +21,9 @@ import { todoToPlanEntries } from "./plan"
 
 const PROTOCOL_VERSION = "0.1.0"
 
-function normalizeEmittedPath(pathValue: string) {
+function normalizeEmittedPath(pathValue: string, workspace?: string) {
   const originalNormalized = pathValue.replace(/\\+/g, "/")
-  const normalized = path.resolve(pathValue).replace(/\\+/g, "/")
+  const normalized = path.resolve(workspace || process.cwd(), pathValue).replace(/\\+/g, "/")
   return /^[A-Z]:/i.test(originalNormalized) ? normalized.toLowerCase() : normalized
 }
 
@@ -164,6 +164,7 @@ export class ACPServer {
     if (!sessionId) throw new Error("sessionId is required")
 
     let session = this.sessions.get(sessionId)
+    let persistedWorkspace = session?.workspace
     if (!session) {
       const workspace = (params.cwd as string) || "/workspace"
       await Boot.init(workspace)
@@ -176,16 +177,19 @@ export class ACPServer {
         workspace: dbSession.directory,
         mcpServers: [],
       }
+      persistedWorkspace = dbSession.directory
       this.sessions.set(session.id, session)
     }
 
-    if (params.cwd) session.workspace = params.cwd as string
-    if (params.mcpServers) session.mcpServers = params.mcpServers as MCPServerConfig[]
+    persistedWorkspace ||= session.workspace
 
     const entries = await Instance.provide({
-      directory: session.workspace,
+      directory: persistedWorkspace,
       fn: async () => todoToPlanEntries(Todo.get(session.id as SessionID)),
     })
+
+    if (params.cwd) session.workspace = params.cwd as string
+    if (params.mcpServers) session.mcpServers = params.mcpServers as MCPServerConfig[]
 
     return ACP.sessionBootstrapResult(session.id, session.workspace, entries)
   }
@@ -358,7 +362,7 @@ export class ACPServer {
               } else if (part.state.status === "completed") {
                 const { output: rawOutput, diff, structured: encodedStructured } = decodeToolOutput(part.state.output)
                 const structured = encodedStructured ?? projectStructuredToolPayload(part.tool, part.state.metadata)
-                if (diff) emittedDiffPaths.add(normalizeEmittedPath(diff.path))
+                if (diff) emittedDiffPaths.add(normalizeEmittedPath(diff.path, session.workspace))
                 this._notify(
                   ACP.toolCallUpdate(
                     sessionId,
@@ -463,7 +467,7 @@ export class ACPServer {
             })
             let counter = 0
             for (const diff of wsDiffs) {
-              if (emittedDiffPaths.has(normalizeEmittedPath(diff.absolutePath))) continue
+              if (emittedDiffPaths.has(normalizeEmittedPath(diff.absolutePath, session.workspace))) continue
               const relPath = path.relative(session.workspace, diff.absolutePath)
               const syntheticId = `ws-sync-${Date.now()}-${++counter}-${path.basename(diff.absolutePath)}`
               this._notify(ACP.toolCall(sessionId, syntheticId, "workspace-sync", { file: relPath }, session.workspace))

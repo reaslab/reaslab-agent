@@ -29,7 +29,7 @@ export namespace ConfigMarkdown {
     const fs = await import("fs/promises")
     const raw = await fs.readFile(filepath, "utf-8")
     // Simple frontmatter parser
-    const fmRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/
+    const fmRegex = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/
     const match = raw.match(fmRegex)
     if (!match) {
       return { data: {}, content: raw }
@@ -38,7 +38,7 @@ export namespace ConfigMarkdown {
     const content = match[2]
     // Basic YAML-like key: value parsing
     const data: Record<string, any> = {}
-    for (const line of yaml.split("\n")) {
+    for (const line of yaml.split(/\r?\n/)) {
       const kv = line.match(/^(\w+):\s*(.*)$/)
       if (kv) {
         data[kv[1]] = kv[2].replace(/^["']|["']$/g, "")

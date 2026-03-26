@@ -121,31 +121,58 @@ export namespace MCP {
   async function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Promise<Tool> {
     const inputSchema = mcpTool.inputSchema
 
-    // Spread first, then override type to ensure it's always "object"
+    // Clean schema to remove unsupported JSON Schema features
+    const cleanSchema = (obj: any): any => {
+      if (!obj || typeof obj !== 'object') return obj
+
+      const cleaned: any = Array.isArray(obj) ? [] : {}
+
+      for (const [key, value] of Object.entries(obj)) {
+        // Skip unsupported keywords that cause "Custom types cannot be represented" error
+        if (['anyOf', 'oneOf', 'allOf', '$ref', 'definitions', '$defs'].includes(key)) {
+          continue
+        }
+
+        cleaned[key] = typeof value === 'object' ? cleanSchema(value) : value
+      }
+
+      return cleaned
+    }
+
     const schema: JSONSchema7 = {
-      ...(inputSchema as JSONSchema7),
+      ...cleanSchema(inputSchema),
       type: "object",
-      properties: (inputSchema.properties ?? {}) as JSONSchema7["properties"],
+      properties: cleanSchema(inputSchema.properties ?? {}) as JSONSchema7["properties"],
       additionalProperties: false,
     }
 
-    return dynamicTool({
-      description: mcpTool.description ?? "",
-      inputSchema: jsonSchema(schema),
-      execute: async (args: unknown) => {
-        return client.callTool(
-          {
-            name: mcpTool.name,
-            arguments: (args || {}) as Record<string, unknown>,
-          },
-          CallToolResultSchema,
-          {
-            resetTimeoutOnProgress: true,
-            timeout,
-          },
-        )
-      },
-    })
+    try {
+      return dynamicTool({
+        description: mcpTool.description ?? "",
+        inputSchema: jsonSchema(schema),
+        execute: async (args: unknown) => {
+          return client.callTool(
+            {
+              name: mcpTool.name,
+              arguments: (args || {}) as Record<string, unknown>,
+            },
+            CallToolResultSchema,
+            {
+              resetTimeoutOnProgress: true,
+              timeout,
+            },
+          )
+        },
+      })
+    } catch (error) {
+      log.error("Failed to convert MCP tool", {
+        toolName: mcpTool.name,
+        originalSchema: JSON.stringify(inputSchema, null, 2),
+        cleanedSchema: JSON.stringify(schema, null, 2),
+        error
+      })
+      throw error
+    }
   }
 
   // Prompt cache types
