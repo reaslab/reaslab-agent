@@ -6,11 +6,13 @@ import { Effect, Layer, ServiceMap } from "effect"
 import { NamedError } from "@opencode-ai/util/error"
 import type { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
+import type { WorkspaceID } from "@/control-plane/schema"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRunPromise } from "@/effect/run-service"
 import { Flag } from "@/flag/flag"
 import { Global } from "@/global"
 import { Permission } from "@/permission"
+import type { SessionID } from "@/session/schema"
 import { Filesystem } from "@/util/filesystem"
 import { Config } from "../config/config"
 import { ConfigMarkdown } from "../config/markdown"
@@ -68,6 +70,40 @@ export namespace Skill {
     readonly available: (agent?: Agent.Info) => Effect.Effect<Info[]>
   }
 
+  type RuntimeScopeName = "discovered" | "workspace" | "session"
+
+  type RuntimeScope = {
+    workspaceID?: WorkspaceID
+    sessionID?: SessionID
+  }
+
+  type RuntimeLoadInput = RuntimeScope & {
+    scope: RuntimeScopeName
+    root: string
+    hide?: string[]
+  }
+
+  type RuntimeUnloadInput = RuntimeScope & {
+    scope: RuntimeScopeName
+    names?: string[]
+  }
+
+  type RuntimeSourceState = {
+    skills: Map<string, Info>
+    hidden: Set<string>
+  }
+
+  type RuntimeOverlayState = {
+    sources: Map<string, RuntimeSourceState>
+  }
+
+  export type RuntimeOverlay = {
+    load(input: RuntimeLoadInput): Promise<void>
+    unload(input: RuntimeUnloadInput): Promise<void>
+    all(scope?: RuntimeScope): Promise<Info[]>
+    get(name: string, scope?: RuntimeScope): Promise<Info | undefined>
+  }
+
   const add = async (state: State, match: string) => {
     const md = await ConfigMarkdown.parse(match).catch(async (err: any) => {
       const message = (ConfigMarkdown as any).FrontmatterError?.isInstance?.(err)
@@ -114,6 +150,203 @@ export namespace Skill {
         if (!opts?.scope) throw error
         log.error(`failed to scan ${opts.scope} skills`, { dir: root, error })
       })
+  }
+
+  const parseRuntimeInfo = async (location: string) => {
+    const md = await ConfigMarkdown.parse(location).catch((err) => {
+      log.error("failed to load runtime skill", { skill: location, err })
+      return undefined
+    })
+    if (!md) return
+
+    const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
+    if (!parsed.success) {
+      log.warn("invalid runtime skill metadata", { skill: location, issues: parsed.error.issues })
+      return
+    }
+
+    return {
+      name: parsed.data.name,
+      description: parsed.data.description,
+      location,
+      content: md.content,
+    } satisfies Info
+  }
+
+  const scanRuntimeOverlay = async (root: string) => {
+    const matches = await Glob.scan(SKILL_PATTERN, {
+      cwd: root,
+      absolute: true,
+      include: "file",
+      symlink: true,
+    })
+
+    const loaded = await Promise.all(matches.map((match) => parseRuntimeInfo(match)))
+    const skills = new Map<string, Info>()
+    for (const skill of loaded) {
+      if (!skill) continue
+      skills.set(skill.name, skill)
+    }
+    return skills
+  }
+
+  const runtimeOverlayState = (): RuntimeOverlayState => ({
+    sources: new Map<string, RuntimeSourceState>(),
+  })
+
+  const runtimeScopeKey = (scope: Exclude<RuntimeScopeName, "discovered">, input: RuntimeScope) => {
+    if (!input.workspaceID) {
+      throw new Error(`${scope} scope requires workspaceID`)
+    }
+
+    if (scope === "workspace") {
+      return `${input.workspaceID}`
+    }
+
+    if (!input.sessionID) {
+      throw new Error("session scope requires sessionID")
+    }
+
+    return `${input.workspaceID}:${input.sessionID}`
+  }
+
+  const mergeOverlay = (base: Map<string, Info>, overlay?: RuntimeOverlayState) => {
+    const merged = new Map(base)
+    if (!overlay) return merged
+
+    for (const source of overlay.sources.values()) {
+      for (const hidden of source.hidden) {
+        merged.delete(hidden)
+      }
+
+      for (const [name, info] of source.skills) {
+        merged.set(name, info)
+      }
+    }
+
+    return merged
+  }
+
+  export function runtimeOverlay(input?: { discovered?: Info[] }): RuntimeOverlay {
+    const discovered = new Map((input?.discovered ?? []).map((skill) => [skill.name, skill] as const))
+    const discoveredRoots = new Map<string, Map<string, Info>>()
+    const workspace = new Map<string, RuntimeOverlayState>()
+    const session = new Map<string, RuntimeOverlayState>()
+
+    const overlayFor = (scope: Exclude<RuntimeScopeName, "discovered">, target: RuntimeScope) => {
+      const key = runtimeScopeKey(scope, target)
+      const table = scope === "workspace" ? workspace : session
+      let overlay = table.get(key)
+      if (!overlay) {
+        overlay = runtimeOverlayState()
+        table.set(key, overlay)
+      }
+      return overlay
+    }
+
+    const visible = (scope?: RuntimeScope) => {
+      let merged = new Map(discovered)
+      if (!scope?.workspaceID) return merged
+
+      merged = mergeOverlay(merged, workspace.get(runtimeScopeKey("workspace", scope)))
+      if (!scope.sessionID) return merged
+
+      return mergeOverlay(merged, session.get(runtimeScopeKey("session", scope)))
+    }
+
+    return {
+      load: async (params: RuntimeLoadInput) => {
+        const skills = await scanRuntimeOverlay(params.root)
+
+        if (params.scope === "discovered") {
+          for (const [root, source] of discoveredRoots) {
+            if (root === params.root) continue
+
+            for (const name of skills.keys()) {
+              if (source.has(name)) {
+                throw new Error(`discovered overlay collision for skill ${name}`)
+              }
+            }
+          }
+
+          const previous = discoveredRoots.get(params.root)
+          if (previous) {
+            for (const name of previous.keys()) {
+              discovered.delete(name)
+            }
+          }
+
+          discoveredRoots.set(params.root, skills)
+          for (const [name, info] of skills) {
+            discovered.set(name, info)
+          }
+          return
+        }
+
+        const overlay = overlayFor(params.scope, params)
+        for (const [root, source] of overlay.sources) {
+          if (root === params.root) continue
+
+          for (const name of skills.keys()) {
+            if (source.skills.has(name)) {
+              throw new Error(`${params.scope} overlay collision for skill ${name}`)
+            }
+          }
+        }
+
+        overlay.sources.set(params.root, {
+          skills,
+          hidden: new Set(params.hide ?? []),
+        })
+      },
+      unload: async (params: RuntimeUnloadInput) => {
+        const names = new Set(params.names ?? [])
+
+        if (params.scope === "discovered") {
+          if (names.size === 0) {
+            discovered.clear()
+            discoveredRoots.clear()
+            return
+          }
+
+          for (const name of names) {
+            discovered.delete(name)
+          }
+
+          for (const [root, source] of discoveredRoots) {
+            for (const name of names) {
+              source.delete(name)
+            }
+
+            if (source.size === 0) {
+              discoveredRoots.delete(root)
+            }
+          }
+          return
+        }
+
+        const overlay = overlayFor(params.scope, params)
+        if (names.size === 0) {
+          overlay.sources.clear()
+          return
+        }
+
+        for (const source of overlay.sources.values()) {
+          for (const name of names) {
+            source.skills.delete(name)
+            source.hidden.delete(name)
+          }
+        }
+
+        for (const [root, source] of overlay.sources) {
+          if (source.skills.size === 0 && source.hidden.size === 0) {
+            overlay.sources.delete(root)
+          }
+        }
+      },
+      all: async (scope?: RuntimeScope) => Array.from(visible(scope).values()).toSorted((a, b) => a.name.localeCompare(b.name)),
+      get: async (name: string, scope?: RuntimeScope) => visible(scope).get(name),
+    }
   }
 
   // TODO: Migrate to Effect
