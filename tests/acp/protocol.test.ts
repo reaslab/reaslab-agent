@@ -29,7 +29,14 @@ describe("ACP Protocol", () => {
     const msg = ACP.toolCallUpdate("sess-1", "call-1", "completed", "ok", [{ type: "text", text: "done" }])
     expect(msg.params.update.sessionUpdate).toBe("tool_call_update")
     expect(msg.params.update.status).toBe("completed")
-    expect(msg.params.update.rawOutput).toEqual({ result: "ok" })
+    expect(msg.params.update.rawOutput).toBe("ok")
+  })
+
+  test("keeps string rawOutput unchanged and mirrors it in text content when no diff is present", () => {
+    const msg = ACP.toolCallUpdate("sess-1", "call-1", "completed", "ok")
+
+    expect(msg.params.update.rawOutput).toBe("ok")
+    expect(msg.params.update.content).toEqual([{ type: "text", text: "ok" }])
   })
 
   test("maps tool names to kinds", () => {
