@@ -9,12 +9,18 @@ export namespace Config {
     maxSteps?: number
   }
 
+  export interface SkillsConfig {
+    paths?: string[]
+    urls?: string[]
+  }
+
   export interface AppConfig {
     workspace: string
     userId: string
     dataDir: string
     agents: AgentDef[]
     dockerHost?: string
+    skills?: SkillsConfig
   }
 
   let _config: AppConfig | undefined
@@ -67,6 +73,9 @@ export namespace Config {
       dataDir: process.env.DATA_DIR || "/app/data",
       agents: BUILTIN_AGENTS,
       dockerHost: process.env.DOCKER_HOST,
+      skills: {
+        paths: ["skills"],
+      },
     }
 
     return _config

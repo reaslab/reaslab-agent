@@ -13,6 +13,12 @@ import { ToolRegistry } from "../../src/tool/registry"
 const workspaceID = WorkspaceID.make("wrk_runtime_skill_tools")
 const sessionID = SessionID.make("ses_runtime_skill_tools")
 const messageID = MessageID.make("msg_runtime_skill_tools")
+const repositoryMathflowPath = path.resolve(import.meta.dir, "../../skills/mathflow/SKILL.md")
+const repositoryProblemAnalysisPath = path.resolve(import.meta.dir, "../../skills/problem-analysis/SKILL.md")
+const repositoryResearchPlanningPath = path.resolve(import.meta.dir, "../../skills/research-planning/SKILL.md")
+const repositoryNumericalExperimentationPath = path.resolve(import.meta.dir, "../../skills/numerical-experimentation/SKILL.md")
+const repositoryResultValidationPath = path.resolve(import.meta.dir, "../../skills/result-validation/SKILL.md")
+const repositoryReportWritingPath = path.resolve(import.meta.dir, "../../skills/report-writing/SKILL.md")
 
 type RuntimeToolID = "skill-finder" | "load-skill" | "unload-skill"
 
@@ -157,6 +163,188 @@ describe("runtime skill tools", () => {
 
     expect(call.result.output).toContain("visible-skill")
     expect(call.result.metadata?.status).toBe("ok")
+  })
+
+  test("skill-finder returns a workspace-local discovered skill from skills/", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-runtime-tools-"))
+    tempDirs.push(root)
+    await writeSkillFile(path.join(root, "skills"), "mathflow", "workspace-local runtime skill", "Mathflow body")
+
+    const call = await findSkill(root, {
+      query: "mathflow",
+      scope: "workspace",
+      workspaceID,
+    })
+
+    expectFound(call.result, "mathflow")
+  })
+
+  test("skill-finder discovers repository analysis and modeling stage skills", async () => {
+    const workspace = path.resolve(import.meta.dir, "../..")
+
+    const analysisCall = await findSkill(workspace, {
+      query: "problem-analysis",
+      scope: "workspace",
+      workspaceID,
+    })
+
+    expectFound(analysisCall.result, "problem-analysis")
+
+    const modelingCall = await findSkill(workspace, {
+      query: "mathematical-modeling",
+      scope: "workspace",
+      workspaceID,
+    })
+
+    expectFound(modelingCall.result, "mathematical-modeling")
+  })
+
+  test("skill-finder discovers repository derivation and planning stage skills", async () => {
+    const workspace = path.resolve(import.meta.dir, "../..")
+
+    const derivationCall = await findSkill(workspace, {
+      query: "derivation-and-proof-checking",
+      scope: "workspace",
+      workspaceID,
+    })
+
+    expectFound(derivationCall.result, "derivation-and-proof-checking")
+
+    const planningCall = await findSkill(workspace, {
+      query: "research-planning",
+      scope: "workspace",
+      workspaceID,
+    })
+
+    expectFound(planningCall.result, "research-planning")
+  })
+
+  test("skill-finder discovers repository experimentation and validation stage skills", async () => {
+    const workspace = path.resolve(import.meta.dir, "../..")
+
+    const experimentationCall = await findSkill(workspace, {
+      query: "numerical-experimentation",
+      scope: "workspace",
+      workspaceID,
+    })
+
+    expectFound(experimentationCall.result, "numerical-experimentation")
+
+    const validationCall = await findSkill(workspace, {
+      query: "result-validation",
+      scope: "workspace",
+      workspaceID,
+    })
+
+    expectFound(validationCall.result, "result-validation")
+  })
+
+  test("skill-finder discovers the repository reporting stage skill", async () => {
+    const workspace = path.resolve(import.meta.dir, "../..")
+
+    const reportWritingCall = await findSkill(workspace, {
+      query: "report-writing",
+      scope: "workspace",
+      workspaceID,
+    })
+
+    expectFound(reportWritingCall.result, "report-writing")
+  })
+
+  test("load-skill loads problem-analysis from a local path and makes it available in session scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-runtime-tools-"))
+    tempDirs.push(root)
+
+    const loaded = await loadSkill(root, {
+      localPath: repositoryProblemAnalysisPath,
+      workspaceID,
+      sessionID,
+    })
+
+    expect(loaded.result.metadata?.status).toBe("ok")
+    expect(loaded.result.metadata?.scope).toBe("session")
+    expect(loaded.result.metadata?.name).toBe("problem-analysis")
+
+    const visible = await findSkill(root, {
+      query: "problem-analysis",
+      scope: "session",
+      workspaceID,
+      sessionID,
+    })
+
+    expectFound(visible.result, "problem-analysis")
+  })
+
+  test("load-skill loads research-planning from a local path and makes it available in session scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-runtime-tools-"))
+    tempDirs.push(root)
+
+    const loaded = await loadSkill(root, {
+      localPath: repositoryResearchPlanningPath,
+      workspaceID,
+      sessionID,
+    })
+
+    expect(loaded.result.metadata?.status).toBe("ok")
+    expect(loaded.result.metadata?.scope).toBe("session")
+    expect(loaded.result.metadata?.name).toBe("research-planning")
+
+    const visible = await findSkill(root, {
+      query: "research-planning",
+      scope: "session",
+      workspaceID,
+      sessionID,
+    })
+
+    expectFound(visible.result, "research-planning")
+  })
+
+  test("load-skill loads result-validation from a local path and makes it available in session scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-runtime-tools-"))
+    tempDirs.push(root)
+
+    const loaded = await loadSkill(root, {
+      localPath: repositoryResultValidationPath,
+      workspaceID,
+      sessionID,
+    })
+
+    expect(loaded.result.metadata?.status).toBe("ok")
+    expect(loaded.result.metadata?.scope).toBe("session")
+    expect(loaded.result.metadata?.name).toBe("result-validation")
+
+    const visible = await findSkill(root, {
+      query: "result-validation",
+      scope: "session",
+      workspaceID,
+      sessionID,
+    })
+
+    expectFound(visible.result, "result-validation")
+  })
+
+  test("load-skill loads report-writing from a local path and makes it available in session scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-runtime-tools-"))
+    tempDirs.push(root)
+
+    const loaded = await loadSkill(root, {
+      localPath: repositoryReportWritingPath,
+      workspaceID,
+      sessionID,
+    })
+
+    expect(loaded.result.metadata?.status).toBe("ok")
+    expect(loaded.result.metadata?.scope).toBe("session")
+    expect(loaded.result.metadata?.name).toBe("report-writing")
+
+    const visible = await findSkill(root, {
+      query: "report-writing",
+      scope: "session",
+      workspaceID,
+      sessionID,
+    })
+
+    expectFound(visible.result, "report-writing")
   })
 
   test("skill-finder can include a session-hidden skill", async () => {

@@ -552,14 +552,11 @@ export namespace Skill {
       //   await scan(state, dir, OPENCODE_SKILL_PATTERN)
       // }
 
-      const cfg = Config.get() as any
+      const cfg = Config.get()
       for (const item of cfg.skills?.paths ?? []) {
         const expanded = item.startsWith("~/") ? path.join(os.homedir(), item.slice(2)) : item
         const dir = path.isAbsolute(expanded) ? expanded : path.join(directory, expanded)
-        if (!(await Filesystem.isDir(dir))) {
-          log.warn("skill path not found", { path: dir })
-          continue
-        }
+        if (!(await Filesystem.isDir(dir))) continue
 
         await scan(state, dir, SKILL_PATTERN)
       }
