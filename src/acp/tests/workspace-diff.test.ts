@@ -69,3 +69,91 @@ describe("WorkspaceDiffer skip rules", () => {
     expect((differ as any).entries.has(path.join(tmpDir, ".git", "HEAD"))).toBe(false)
   })
 })
+
+describe("WorkspaceDiffer diff detection", () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-diff-test-"))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  test("detects modified file", async () => {
+    const file = path.join(tmpDir, "hello.txt")
+    await fs.writeFile(file, "original content")
+    const { WorkspaceDiffer } = await import("../workspace-diff")
+    const differ = new WorkspaceDiffer()
+    await differ.snapshot(tmpDir)
+    // Force mtime change
+    await new Promise((r) => setTimeout(r, 10))
+    await fs.writeFile(file, "modified content")
+    const now = new Date()
+    await fs.utimes(file, now, now)
+    const diffs = await differ.computeDiffs(tmpDir)
+    expect(diffs).toHaveLength(1)
+    expect(diffs[0].absolutePath).toBe(file)
+    expect(diffs[0].oldText).toBe("original content")
+    expect(diffs[0].newText).toBe("modified content")
+  })
+
+  test("detects new file (oldText is empty string)", async () => {
+    await fs.writeFile(path.join(tmpDir, "existing.txt"), "exists")
+    const { WorkspaceDiffer } = await import("../workspace-diff")
+    const differ = new WorkspaceDiffer()
+    await differ.snapshot(tmpDir)
+    const newFile = path.join(tmpDir, "new.txt")
+    await fs.writeFile(newFile, "brand new")
+    const diffs = await differ.computeDiffs(tmpDir)
+    expect(diffs).toHaveLength(1)
+    expect(diffs[0].absolutePath).toBe(newFile)
+    expect(diffs[0].oldText).toBe("")
+    expect(diffs[0].newText).toBe("brand new")
+  })
+
+  test("ignores unmodified files", async () => {
+    await fs.writeFile(path.join(tmpDir, "same.txt"), "unchanged")
+    const { WorkspaceDiffer } = await import("../workspace-diff")
+    const differ = new WorkspaceDiffer()
+    await differ.snapshot(tmpDir)
+    const diffs = await differ.computeDiffs(tmpDir)
+    expect(diffs).toHaveLength(0)
+  })
+
+  test("ignores deleted files (no error)", async () => {
+    const file = path.join(tmpDir, "will-delete.txt")
+    await fs.writeFile(file, "gone")
+    const { WorkspaceDiffer } = await import("../workspace-diff")
+    const differ = new WorkspaceDiffer()
+    await differ.snapshot(tmpDir)
+    await fs.rm(file)
+    const diffs = await differ.computeDiffs(tmpDir)
+    expect(diffs).toHaveLength(0)
+  })
+
+  test("returns [] if snapshot never called", async () => {
+    const { WorkspaceDiffer } = await import("../workspace-diff")
+    const differ = new WorkspaceDiffer()
+    const diffs = await differ.computeDiffs(tmpDir)
+    expect(diffs).toHaveLength(0)
+  })
+
+  test("returns diffs sorted by path", async () => {
+    await fs.writeFile(path.join(tmpDir, "b.txt"), "before")
+    await fs.writeFile(path.join(tmpDir, "a.txt"), "before")
+    const { WorkspaceDiffer } = await import("../workspace-diff")
+    const differ = new WorkspaceDiffer()
+    await differ.snapshot(tmpDir)
+    const now = new Date()
+    await fs.writeFile(path.join(tmpDir, "b.txt"), "after")
+    await fs.utimes(path.join(tmpDir, "b.txt"), now, now)
+    await fs.writeFile(path.join(tmpDir, "a.txt"), "after")
+    await fs.utimes(path.join(tmpDir, "a.txt"), now, now)
+    const diffs = await differ.computeDiffs(tmpDir)
+    expect(diffs).toHaveLength(2)
+    expect(path.basename(diffs[0].absolutePath)).toBe("a.txt")
+    expect(path.basename(diffs[1].absolutePath)).toBe("b.txt")
+  })
+})

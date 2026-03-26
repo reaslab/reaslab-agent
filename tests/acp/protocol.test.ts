@@ -60,6 +60,21 @@ describe("ACP Protocol", () => {
     ])
   })
 
+  test("keeps string rawOutput unchanged and mirrors it in text content when no diff is present", () => {
+    const msg = ACP.toolCallUpdate("sess-1", "call-1", "completed", "ok")
+
+    expect(msg.params.update.rawOutput).toBe("ok")
+    expect(msg.params.update.content).toEqual([
+      {
+        type: "content",
+        content: {
+          type: "text",
+          text: "ok",
+        },
+      },
+    ])
+  })
+
   test("maps tool names to kinds", () => {
     expect(ACP.toolKind("write_file")).toBe("edit")
     expect(ACP.toolKind("edit_file")).toBe("edit")
