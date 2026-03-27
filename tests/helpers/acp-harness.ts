@@ -76,6 +76,13 @@ type PromptCompletion = {
   classification: PromptCompletionClassification | null
 }
 
+type PromptRunCapture = {
+  sessionId: string
+  requestId: string | number | null
+  notifications: unknown[]
+  errors: unknown[]
+}
+
 function isJsonRpcResponse(message: unknown): message is JsonRpcResponse {
   return !!message && typeof message === "object" && "jsonrpc" in message && ("result" in message || "error" in message)
 }
@@ -87,6 +94,26 @@ function isSessionUpdateMessage(message: unknown): message is SessionUpdateMessa
     "method" in message &&
     message.method === "session/update"
   )
+}
+
+function getSessionId(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined
+  if ("params" in message && message.params && typeof message.params === "object" && "sessionId" in message.params) {
+    return typeof message.params.sessionId === "string" ? message.params.sessionId : undefined
+  }
+  return undefined
+}
+
+function matchesPromptRun(message: unknown, run: PromptRunCapture): boolean {
+  if (isSessionUpdateMessage(message)) {
+    return getSessionId(message) === run.sessionId
+  }
+
+  if (isJsonRpcResponse(message)) {
+    return message.id === run.requestId
+  }
+
+  return false
 }
 
 function classifyCompletion(params: {
@@ -221,12 +248,21 @@ export function createACPHarness(options?: {
   }
   let currentNotifications: unknown[] = []
   let currentErrors: unknown[] = []
+  let activePromptRun: PromptRunCapture | null = null
 
   server.onNotification = (message) => {
     currentNotifications.push(message)
 
     if (isJsonRpcResponse(message) && message.error) {
       currentErrors.push(message)
+    }
+
+    if (activePromptRun && matchesPromptRun(message, activePromptRun)) {
+      activePromptRun.notifications.push(message)
+
+      if (isJsonRpcResponse(message) && message.error) {
+        activePromptRun.errors.push(message)
+      }
     }
   }
 
@@ -319,90 +355,101 @@ export function createACPHarness(options?: {
       currentErrors = []
 
       const requestId = `prompt-${startedAt}`
+      activePromptRun = {
+        sessionId,
+        requestId,
+        notifications: [],
+        errors: [],
+      }
 
-      const promptImmediateResult = await dispatch({
-        jsonrpc: "2.0",
-        id: requestId,
-        method: "session/prompt",
-        params: {
-          sessionId,
-          prompt,
-          _meta,
-        },
-      }) as JsonRpcSuccess<null>
+      try {
+        const promptImmediateResult = await dispatch({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "session/prompt",
+          params: {
+            sessionId,
+            prompt,
+            _meta,
+          },
+        }) as JsonRpcSuccess<null>
 
-      let timedOut = false
-      let cancelResult: { cancelled: boolean } | null = null
-      const immediateFinalResponse = isJsonRpcResponse(promptImmediateResult) && promptImmediateResult.error
-        ? promptImmediateResult
-        : null
+        let timedOut = false
+        let cancelResult: { cancelled: boolean } | null = null
+        const immediateFinalResponse = isJsonRpcResponse(promptImmediateResult) && promptImmediateResult.error
+          ? promptImmediateResult
+          : null
 
-      const finalResponse = immediateFinalResponse ?? await new Promise<JsonRpcResponse | null>((resolve) => {
-        let settled = false
-        let pollTimer: ReturnType<typeof setTimeout> | undefined
+        const finalResponse = immediateFinalResponse ?? await new Promise<JsonRpcResponse | null>((resolve) => {
+          let settled = false
+          let pollTimer: ReturnType<typeof setTimeout> | undefined
 
-        const finish = (value: JsonRpcResponse | null) => {
-          if (settled) return
-          settled = true
-          clearTimeout(deadline)
-          if (pollTimer) clearTimeout(pollTimer)
-          resolve(value)
-        }
-
-        const deadline = setTimeout(() => {
-          timedOut = true
-          cancelResult = { cancelled: false }
-          fireAndForgetCancel(dispatch, requestId, sessionId)
-          finish(null)
-        }, timeoutMs)
-
-        const poll = () => {
-          if (settled) return
-
-          const response = currentNotifications.find((message) => {
+          const findResponse = () => activePromptRun?.notifications.find((message) => {
             if (!isJsonRpcResponse(message)) return false
             return message.id === requestId
           }) as JsonRpcResponse | undefined
 
-          if (response) {
-            finish(response)
-            return
+          const finish = (value: JsonRpcResponse | null) => {
+            if (settled) return
+            settled = true
+            clearTimeout(deadline)
+            if (pollTimer) clearTimeout(pollTimer)
+            resolve(value)
           }
 
-          pollTimer = setTimeout(poll, 10)
+          const deadline = setTimeout(() => {
+            timedOut = true
+            cancelResult = { cancelled: false }
+            fireAndForgetCancel(dispatch, requestId, sessionId)
+            finish(null)
+          }, timeoutMs)
+
+          const poll = () => {
+            if (settled) return
+
+            const response = findResponse()
+            if (response) {
+              finish(response)
+              return
+            }
+
+            pollTimer = setTimeout(poll, 5)
+          }
+
+          poll()
+        })
+
+        const normalized = collectPromptResult({
+          notifications: [...(activePromptRun?.notifications ?? [])],
+          errors: [...(activePromptRun?.errors ?? [])],
+          timedOut,
+          finalResponse,
+        })
+
+        return {
+          promptImmediateResult: promptImmediateResult.result,
+          notifications: normalized.notifications,
+          errors: normalized.errors,
+          aggregatedText: normalized.aggregatedText,
+          aggregatedThoughts: normalized.aggregatedThoughts,
+          toolCalls: normalized.toolCalls,
+          toolCallUpdates: normalized.toolCallUpdates,
+          planUpdates: normalized.planUpdates,
+          finalResponse: normalized.finalResponse,
+          model: typeof _meta.model === "string" ? _meta.model : null,
+          scenario: "prompt-lifecycle",
+          timeline: {
+            startedAt,
+            completedAt: Date.now(),
+            timeoutMs,
+          },
+          completion: {
+            ...normalized.completion,
+            cancelResult,
+          },
         }
-
-        poll()
-      })
-
-      const normalized = collectPromptResult({
-        notifications: [...currentNotifications],
-        errors: [...currentErrors],
-        timedOut,
-        finalResponse,
-      })
-
-      return {
-        promptImmediateResult: promptImmediateResult.result,
-        notifications: normalized.notifications,
-        errors: normalized.errors,
-        aggregatedText: normalized.aggregatedText,
-        aggregatedThoughts: normalized.aggregatedThoughts,
-        toolCalls: normalized.toolCalls,
-        toolCallUpdates: normalized.toolCallUpdates,
-        planUpdates: normalized.planUpdates,
-        finalResponse: normalized.finalResponse,
-        model: typeof _meta.model === "string" ? _meta.model : null,
-        scenario: "prompt-lifecycle",
-        timeline: {
-          startedAt,
-          completedAt: Date.now(),
-          timeoutMs,
-        },
-        completion: {
-          ...normalized.completion,
-          cancelResult,
-        },
+      } finally {
+        activePromptRun = null
       }
     },
 

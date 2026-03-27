@@ -409,4 +409,79 @@ describe("ACP harness contract", () => {
       classification: "runtime_failure",
     })
   })
+
+  test("prompt result aggregation ignores unrelated session and request notifications", async () => {
+    const server = new ACPServer()
+    const harness = createACPHarness({
+      server,
+      dispatch(request) {
+        switch (request.method) {
+          case "initialize":
+            return Promise.resolve({ result: { protocolVersion: "0.1.0" } })
+          case "authenticate":
+            return Promise.resolve({ result: { authenticated: true } })
+          case "session/new":
+            return Promise.resolve({
+              result: {
+                sessionId: "ses-scoped",
+                workspace: "C:/tmp/reaslab-agent/acp-contract-scoped",
+                plan: { entries: [] },
+              },
+            })
+          case "session/prompt":
+            setTimeout(() => {
+              server.onNotification?.(ACP.messageChunk("ses-other", "ignore-this"))
+              server.onNotification?.(ACP.planUpdate("ses-other", [
+                {
+                  content: "ignore-other-plan",
+                  priority: "low",
+                  status: "pending",
+                },
+              ]))
+              server.onNotification?.(ACP.error("prompt-other", -32603, "ignore-other-error"))
+              server.onNotification?.(ACP.messageChunk("ses-scoped", "kept-text"))
+              server.onNotification?.(ACP.planUpdate("ses-scoped", [
+                {
+                  content: "kept-plan",
+                  priority: "high",
+                  status: "in_progress",
+                },
+              ]))
+              server.onNotification?.(ACP.response(request.id ?? null, { stopReason: "end_turn" }))
+            }, 0)
+            return Promise.resolve({ result: null })
+          default:
+            return Promise.reject(new Error(`Unexpected method: ${request.method}`))
+        }
+      },
+    })
+
+    const started = await harness.start({
+      cwd: "C:/tmp/reaslab-agent/acp-contract-scoped",
+    })
+
+    const result = await harness.runPrompt({
+      sessionId: started.sessionResult.sessionId,
+      prompt: "deterministic scoped prompt",
+      _meta: {
+        model: "test-model",
+        baseUrl: "http://127.0.0.1:1",
+        apiKey: "test-api-key",
+      },
+      timeoutMs: 100,
+    })
+
+    expect(result.aggregatedText).toBe("kept-text")
+    expect(result.planUpdates).toHaveLength(1)
+    expect(result.planUpdates[0]?.params?.update?.entries).toEqual([
+      {
+        content: "kept-plan",
+        priority: "high",
+        status: "in_progress",
+      },
+    ])
+    expect(result.errors).toHaveLength(0)
+    expect(result.finalResponse?.id).toBeDefined()
+    expect(result.finalResponse?.id).not.toBe("prompt-other")
+  })
 })
