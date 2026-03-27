@@ -9,6 +9,14 @@ describe("ACP harness contract", () => {
       cwd: "C:/tmp/reaslab-agent/acp-contract-harness",
     })
 
+    expect(result).toHaveProperty("initializeResult")
+    expect(result).toHaveProperty("authenticateResult")
+    expect(result).toHaveProperty("sessionResult")
+    expect(result).toHaveProperty("notifications")
+    expect(result).toHaveProperty("errors")
+    expect(result).toHaveProperty("timeline")
+    expect(result).toHaveProperty("model")
+    expect(result).toHaveProperty("scenario")
     expect(result.initializeResult.protocolVersion).toBeDefined()
     expect(result.authenticateResult.authenticated).toBe(true)
     expect(result.sessionResult.sessionId).toBeDefined()
