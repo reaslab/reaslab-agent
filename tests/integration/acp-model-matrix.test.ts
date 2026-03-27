@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { ACPServer } from "../../src/acp/server"
@@ -83,48 +83,46 @@ describe("ACP model matrix config loader", () => {
     })
   })
 
-  test("default config path is resolved independently of process cwd", async () => {
+  test("explicit config path is resolved independently of process cwd without touching repo-local config", async () => {
     const dir = await createTempDir()
-    const filePath = join(process.cwd(), "tests", "local", "acp-model-test.config.json")
+    const filePath = join(dir, "acp-model-test.config.json")
+    const childCwd = join(dir, "nested", "cwd")
 
-    await mkdir(join(process.cwd(), "tests", "local"), { recursive: true })
     await writeFile(filePath, JSON.stringify({
       baseUrl: "https://api.example.test/from-stable-default",
       apiKey: "stable-default-key",
       models: ["stable-default-model"],
       timeoutMs: 6789,
     }))
+    await mkdir(childCwd, { recursive: true })
 
-    try {
-      const modulePath = join(process.cwd(), "tests", "helpers", "acp-model-config.ts")
-      const child = spawnSync(
-        "bun",
-        [
-          "--eval",
-          "process.chdir(process.env.ACP_MODEL_MATRIX_CHILD_CONFIG_DIR ?? process.cwd()); const { loadModelMatrixConfig } = await import(process.env.ACP_MODEL_MATRIX_CHILD_SCRIPT_PATH ?? ''); const result = await loadModelMatrixConfig({ mode: 'required' }); process.stdout.write(JSON.stringify(result));",
-        ],
-        {
-          cwd: process.cwd(),
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            ACP_MODEL_MATRIX_CHILD_SCRIPT_PATH: modulePath,
-            ACP_MODEL_MATRIX_CHILD_CONFIG_DIR: dir,
-          },
+    const modulePath = join(process.cwd(), "tests", "helpers", "acp-model-config.ts")
+    const child = spawnSync(
+      "bun",
+      [
+        "--eval",
+        "process.chdir(process.env.ACP_MODEL_MATRIX_CHILD_CONFIG_DIR ?? process.cwd()); const { loadModelMatrixConfig } = await import(process.env.ACP_MODEL_MATRIX_CHILD_SCRIPT_PATH ?? ''); const result = await loadModelMatrixConfig({ mode: 'required', filePath: process.env.ACP_MODEL_MATRIX_CHILD_FILE_PATH }); process.stdout.write(JSON.stringify(result));",
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ACP_MODEL_MATRIX_CHILD_SCRIPT_PATH: modulePath,
+          ACP_MODEL_MATRIX_CHILD_CONFIG_DIR: childCwd,
+          ACP_MODEL_MATRIX_CHILD_FILE_PATH: filePath,
         },
-      )
+      },
+    )
 
-      expect(child.stderr).toBe("")
-      expect(child.status).toBe(0)
-      expect(JSON.parse(child.stdout)).toEqual({
-        baseUrl: "https://api.example.test/from-stable-default",
-        apiKey: "stable-default-key",
-        models: ["stable-default-model"],
-        timeoutMs: 6789,
-      })
-    } finally {
-      await rm(filePath, { force: true })
-    }
+    expect(child.stderr).toBe("")
+    expect(child.status).toBe(0)
+    expect(JSON.parse(child.stdout)).toEqual({
+      baseUrl: "https://api.example.test/from-stable-default",
+      apiKey: "stable-default-key",
+      models: ["stable-default-model"],
+      timeoutMs: 6789,
+    })
   })
 })
 
@@ -300,6 +298,77 @@ describe("ACP model matrix scenario A", () => {
     expect(first.aggregatedText).toBe("alpha")
     expect(second.completion.state).toBe("completed")
     expect(second.aggregatedText).toBe("beta")
+  })
+
+  test("runPrompt leaves timeout cancelResult empty until cancel response is observed", async () => {
+    const harness = createACPHarness({
+      dispatch(request) {
+        switch (request.method) {
+          case "initialize":
+            return Promise.resolve({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                protocolVersion: "1.0",
+                capabilities: {
+                  streaming: true,
+                  tools: true,
+                  skills: true,
+                },
+                serverInfo: {
+                  name: "test-server",
+                  version: "0.0.0",
+                },
+              },
+            })
+          case "authenticate":
+            return Promise.resolve({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                authenticated: true,
+              },
+            })
+          case "session/new":
+            return Promise.resolve({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                sessionId: "session-timeout",
+                workspace: "D:/tmp/acp-matrix-timeout",
+                plan: { entries: [] },
+              },
+            })
+          case "session/prompt":
+            return Promise.resolve({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: null,
+            })
+          case "session/cancel":
+            return new Promise(() => {})
+          default:
+            throw new Error(`Unexpected method: ${String(request.method)}`)
+        }
+      },
+    })
+
+    const started = await harness.start({ cwd: "D:/tmp/acp-matrix-timeout" })
+    const result = await harness.runPrompt({
+      sessionId: started.sessionResult.sessionId,
+      prompt: "wait forever",
+      _meta: {
+        model: "model-timeout",
+        baseUrl: "https://api.example.test/v1",
+        apiKey: "test-api-key",
+      },
+      scenario: "basic-prompt-completion",
+      timeoutMs: 20,
+    })
+
+    expect(result.completion.state).toBe("timed_out")
+    expect(result.completion.classification).toBe("runtime_failure")
+    expect(result.completion.cancelResult).toBeNull()
   })
 
   test("runPrompt records scenario A metadata for basic prompt completion", async () => {

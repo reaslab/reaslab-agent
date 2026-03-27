@@ -514,7 +514,6 @@ export function createACPHarness(options?: {
         let cancelResult: { cancelled: boolean } | null = null
         const deadline = setTimeout(() => {
           timedOut = true
-          cancelResult = { cancelled: false }
           fireAndForgetCancel(dispatch, requestId, sessionId)
           promptRun.resolveFinalResponse(null)
         }, timeoutMs)
