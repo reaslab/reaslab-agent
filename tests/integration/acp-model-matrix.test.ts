@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { loadModelMatrixConfig } from "../helpers/acp-model-config"
@@ -68,5 +68,37 @@ describe("ACP model matrix config loader", () => {
       models: ["model-a", "model-b"],
       timeoutMs: 25000,
     })
+  })
+
+  test("default config path is resolved independently of process cwd", async () => {
+    const originalCwd = process.cwd()
+    const dir = await createTempDir()
+    const filePath = join(originalCwd, "tests", "local", "acp-model-test.config.json")
+
+    await mkdir(join(originalCwd, "tests", "local"), { recursive: true })
+    await writeFile(filePath, JSON.stringify({
+      baseUrl: "https://api.example.test/from-stable-default",
+      apiKey: "stable-default-key",
+      models: ["stable-default-model"],
+      timeoutMs: 6789,
+    }))
+
+    process.chdir(dir)
+
+    try {
+      const result = await loadModelMatrixConfig({
+        mode: "required",
+      })
+
+      expect(result).toEqual({
+        baseUrl: "https://api.example.test/from-stable-default",
+        apiKey: "stable-default-key",
+        models: ["stable-default-model"],
+        timeoutMs: 6789,
+      })
+    } finally {
+      process.chdir(originalCwd)
+      await rm(filePath, { force: true })
+    }
   })
 })

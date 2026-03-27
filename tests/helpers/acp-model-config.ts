@@ -1,6 +1,6 @@
-import { access, readFile } from "node:fs/promises"
-import { constants } from "node:fs"
-import { join } from "node:path"
+import { readFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { z } from "zod"
 
 const modelMatrixConfigSchema = z.object({
@@ -17,7 +17,12 @@ type LoadModelMatrixConfigOptions = {
   filePath?: string
 }
 
-const defaultConfigPath = join("tests", "local", "acp-model-test.config.json")
+const defaultConfigPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "local",
+  "acp-model-test.config.json",
+)
 
 function createMissingConfigError(filePath: string) {
   return new Error(
@@ -36,24 +41,18 @@ function createValidationError(filePath: string, error: z.ZodError) {
 export async function loadModelMatrixConfig(options: LoadModelMatrixConfigOptions): Promise<ModelMatrixConfig | null> {
   const filePath = options.filePath ?? defaultConfigPath
 
-  try {
-    await access(filePath, constants.F_OK)
-  } catch {
-    if (options.mode === "optional") {
-      return null
-    }
-
-    throw createMissingConfigError(filePath)
-  }
-
   let parsed: unknown
 
   try {
     const content = await readFile(filePath, "utf8")
     parsed = JSON.parse(content)
   } catch (error) {
-    if (options.mode === "optional") {
-      throw new Error(`ACP model matrix config at ${filePath} could not be read: ${error instanceof Error ? error.message : String(error)}`)
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      if (options.mode === "optional") {
+        return null
+      }
+
+      throw createMissingConfigError(filePath)
     }
 
     throw new Error(`ACP model matrix config at ${filePath} could not be read: ${error instanceof Error ? error.message : String(error)}`)
