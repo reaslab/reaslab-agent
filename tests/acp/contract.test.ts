@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { ACP } from "../../src/acp/protocol"
 import { ACPServer } from "../../src/acp/server"
 import { Boot } from "../../src/boot"
 import { Instance } from "../../src/project/instance"
@@ -246,6 +247,166 @@ describe("ACP harness contract", () => {
     expect(result.completion.classification).toBeNull()
     expect(result.finalResponse?.result).toMatchObject({
       stopReason: "end_turn",
+    })
+  })
+
+  test("deterministic notifications preserve plan updates under sessionUpdate plan with entries", async () => {
+    const harness = createACPHarness()
+
+    const started = await harness.start({
+      cwd: "C:/tmp/reaslab-agent/acp-contract-deterministic-plan",
+    })
+
+    const result = await harness.runDeterministicPrompt({
+      sessionId: started.sessionResult.sessionId,
+      model: "test-model",
+      notifications: [
+        ACP.planUpdate(started.sessionResult.sessionId, [
+          {
+            content: "Lock ACP contract payload",
+            priority: "high",
+            status: "in_progress",
+          },
+        ]),
+      ],
+    })
+
+    expect(result.planUpdates).toHaveLength(1)
+    expect(result.planUpdates[0]?.params?.update).toEqual({
+      sessionUpdate: "plan",
+      entries: [
+        {
+          content: "Lock ACP contract payload",
+          priority: "high",
+          status: "in_progress",
+        },
+      ],
+    })
+  })
+
+  test("deterministic notifications keep stable toolCallId values across tool lifecycle", async () => {
+    const harness = createACPHarness()
+
+    const started = await harness.start({
+      cwd: "C:/tmp/reaslab-agent/acp-contract-deterministic-tool",
+    })
+
+    const toolCallId = "tool-call-42"
+    const result = await harness.runDeterministicPrompt({
+      sessionId: started.sessionResult.sessionId,
+      model: "test-model",
+      notifications: [
+        ACP.toolCall(
+          started.sessionResult.sessionId,
+          toolCallId,
+          "read",
+          { filePath: "C:/tmp/reaslab-agent/acp-contract-deterministic-tool/src/index.ts" },
+          "C:/tmp/reaslab-agent/acp-contract-deterministic-tool",
+        ),
+        ACP.toolCallUpdate(
+          started.sessionResult.sessionId,
+          toolCallId,
+          "completed",
+          "ok",
+          undefined,
+          { workspace: "C:/tmp/reaslab-agent/acp-contract-deterministic-tool" },
+          { path: "C:/tmp/reaslab-agent/acp-contract-deterministic-tool/src/index.ts" },
+        ),
+      ],
+    })
+
+    expect(result.toolCalls).toHaveLength(1)
+    expect(result.toolCallUpdates).toHaveLength(1)
+    expect(result.toolCalls[0]?.params?.update?.toolCallId).toBe(toolCallId)
+    expect(result.toolCallUpdates[0]?.params?.update?.toolCallId).toBe(toolCallId)
+  })
+
+  test("busy-session and invalid-metadata prompt flows classify runtime failures deterministically", async () => {
+    const busyServer = new ACPServer()
+    const busyHarness = createACPHarness({
+      server: busyServer,
+      dispatch(request) {
+        switch (request.method) {
+          case "initialize":
+            return Promise.resolve({ result: { protocolVersion: "0.1.0" } })
+          case "authenticate":
+            return Promise.resolve({ result: { authenticated: true } })
+          case "session/new":
+            return Promise.resolve({
+              result: {
+                sessionId: "ses-busy",
+                workspace: "C:/tmp/reaslab-agent/acp-contract-errors",
+                plan: { entries: [] },
+              },
+            })
+          case "session/prompt":
+            setTimeout(() => {
+              busyServer.onNotification?.(ACP.error(request.id ?? null, -32603, "Session is busy: ses-busy"))
+            }, 0)
+            return Promise.resolve({ result: null })
+          default:
+            return Promise.reject(new Error(`Unexpected method: ${request.method}`))
+        }
+      },
+    })
+
+    const busyStarted = await busyHarness.start({
+      cwd: "C:/tmp/reaslab-agent/acp-contract-errors",
+    })
+
+    const busyResult = await busyHarness.runPrompt({
+      sessionId: busyStarted.sessionResult.sessionId,
+      prompt: "deterministic busy prompt",
+      _meta: {
+        model: "test-model",
+        baseUrl: "http://127.0.0.1:1",
+        apiKey: "test-api-key",
+      },
+      timeoutMs: 100,
+    })
+
+    expect(busyResult.completion).toMatchObject({
+      state: "errored",
+      classification: "runtime_failure",
+    })
+
+    const invalidHarness = createACPHarness({
+      dispatch(request) {
+        switch (request.method) {
+          case "initialize":
+            return Promise.resolve({ result: { protocolVersion: "0.1.0" } })
+          case "authenticate":
+            return Promise.resolve({ result: { authenticated: true } })
+          case "session/new":
+            return Promise.resolve({
+              result: {
+                sessionId: "ses-invalid-meta",
+                workspace: "C:/tmp/reaslab-agent/acp-contract-errors",
+                plan: { entries: [] },
+              },
+            })
+          case "session/prompt":
+            return Promise.resolve(ACP.error(request.id ?? null, -32603, "_meta must include model, baseUrl, and apiKey"))
+          default:
+            return Promise.reject(new Error(`Unexpected method: ${request.method}`))
+        }
+      },
+    })
+
+    const invalidStarted = await invalidHarness.start({
+      cwd: "C:/tmp/reaslab-agent/acp-contract-errors",
+    })
+
+    const invalidResult = await invalidHarness.runPrompt({
+      sessionId: invalidStarted.sessionResult.sessionId,
+      prompt: "deterministic invalid metadata prompt",
+      _meta: {},
+      timeoutMs: 100,
+    })
+
+    expect(invalidResult.completion).toMatchObject({
+      state: "errored",
+      classification: "runtime_failure",
     })
   })
 })

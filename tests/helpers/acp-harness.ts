@@ -51,6 +51,11 @@ type SessionUpdateMessage = {
   params?: {
     update?: {
       sessionUpdate?: string
+      entries?: Array<{
+        content: string
+        status: "pending" | "in_progress" | "completed"
+        priority: "high" | "medium" | "low"
+      }>
       content?: {
         text?: string
       }
@@ -141,6 +146,50 @@ function classifyCompletion(params: {
   return {
     state: "errored",
     classification: "protocol_mismatch",
+  }
+}
+
+function collectPromptResult(params: {
+  notifications: unknown[]
+  errors: unknown[]
+  timedOut: boolean
+  finalResponse: JsonRpcResponse | null
+}) {
+  const sessionUpdates = params.notifications.filter(isSessionUpdateMessage)
+  const textChunks = sessionUpdates.filter(
+    (message) => message.params?.update?.sessionUpdate === "agent_message_chunk",
+  )
+  const thoughtChunks = sessionUpdates.filter(
+    (message) => message.params?.update?.sessionUpdate === "agent_thought_chunk",
+  )
+  const toolCalls = sessionUpdates.filter(
+    (message) => message.params?.update?.sessionUpdate === "tool_call",
+  )
+  const toolCallUpdates = sessionUpdates.filter(
+    (message) => message.params?.update?.sessionUpdate === "tool_call_update",
+  )
+  const planUpdates = sessionUpdates.filter(
+    (message) => message.params?.update?.sessionUpdate === "plan",
+  )
+
+  return {
+    notifications: params.notifications,
+    errors: params.errors,
+    aggregatedText: textChunks
+      .map((message) => message.params?.update?.content?.text ?? "")
+      .join(""),
+    aggregatedThoughts: thoughtChunks
+      .map((message) => message.params?.update?.content?.text ?? "")
+      .join(""),
+    toolCalls,
+    toolCallUpdates,
+    planUpdates,
+    finalResponse: params.finalResponse,
+    completion: classifyCompletion({
+      timedOut: params.timedOut,
+      finalResponse: params.finalResponse,
+      errors: params.errors,
+    }),
   }
 }
 
@@ -284,8 +333,11 @@ export function createACPHarness(options?: {
 
       let timedOut = false
       let cancelResult: { cancelled: boolean } | null = null
+      const immediateFinalResponse = isJsonRpcResponse(promptImmediateResult) && promptImmediateResult.error
+        ? promptImmediateResult
+        : null
 
-      const finalResponse = await new Promise<JsonRpcResponse | null>((resolve) => {
+      const finalResponse = immediateFinalResponse ?? await new Promise<JsonRpcResponse | null>((resolve) => {
         let settled = false
         let pollTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -323,47 +375,23 @@ export function createACPHarness(options?: {
         poll()
       })
 
-      const notifications = [...currentNotifications]
-      const errors = [...currentErrors]
-      const sessionUpdates = notifications.filter(isSessionUpdateMessage)
-      const textChunks = sessionUpdates.filter(
-        (message) => message.params?.update?.sessionUpdate === "agent_message_chunk",
-      )
-      const thoughtChunks = sessionUpdates.filter(
-        (message) => message.params?.update?.sessionUpdate === "agent_thought_chunk",
-      )
-      const toolCalls = sessionUpdates.filter(
-        (message) => message.params?.update?.sessionUpdate === "tool_call",
-      )
-      const toolCallUpdates = sessionUpdates.filter(
-        (message) => message.params?.update?.sessionUpdate === "tool_call_update",
-      )
-      const planUpdates = sessionUpdates.filter(
-        (message) => message.params?.update?.sessionUpdate === "plan",
-      )
-
-      const aggregatedText = textChunks
-        .map((message) => message.params?.update?.content?.text ?? "")
-        .join("")
-      const aggregatedThoughts = thoughtChunks
-        .map((message) => message.params?.update?.content?.text ?? "")
-        .join("")
-      const completion = classifyCompletion({
+      const normalized = collectPromptResult({
+        notifications: [...currentNotifications],
+        errors: [...currentErrors],
         timedOut,
         finalResponse,
-        errors,
       })
 
       return {
         promptImmediateResult: promptImmediateResult.result,
-        notifications,
-        errors,
-        aggregatedText,
-        aggregatedThoughts,
-        toolCalls,
-        toolCallUpdates,
-        planUpdates,
-        finalResponse,
+        notifications: normalized.notifications,
+        errors: normalized.errors,
+        aggregatedText: normalized.aggregatedText,
+        aggregatedThoughts: normalized.aggregatedThoughts,
+        toolCalls: normalized.toolCalls,
+        toolCallUpdates: normalized.toolCallUpdates,
+        planUpdates: normalized.planUpdates,
+        finalResponse: normalized.finalResponse,
         model: typeof _meta.model === "string" ? _meta.model : null,
         scenario: "prompt-lifecycle",
         timeline: {
@@ -372,8 +400,62 @@ export function createACPHarness(options?: {
           timeoutMs,
         },
         completion: {
-          ...completion,
+          ...normalized.completion,
           cancelResult,
+        },
+      }
+    },
+
+    async runDeterministicPrompt({
+      sessionId,
+      model,
+      notifications,
+      finalResponse,
+    }: {
+      sessionId: string
+      model: string | null
+      notifications: unknown[]
+      finalResponse?: JsonRpcResponse | null
+    }) {
+      const startedAt = Date.now()
+      currentNotifications = []
+      currentErrors = []
+
+      for (const notification of notifications) {
+        server.onNotification?.(notification)
+      }
+
+      const normalized = collectPromptResult({
+        notifications: [...currentNotifications],
+        errors: [...currentErrors],
+        timedOut: false,
+        finalResponse: finalResponse ?? {
+          jsonrpc: "2.0",
+          id: `deterministic-${sessionId}`,
+          result: { stopReason: "end_turn" },
+        },
+      })
+
+      return {
+        promptImmediateResult: null,
+        notifications: normalized.notifications,
+        errors: normalized.errors,
+        aggregatedText: normalized.aggregatedText,
+        aggregatedThoughts: normalized.aggregatedThoughts,
+        toolCalls: normalized.toolCalls,
+        toolCallUpdates: normalized.toolCallUpdates,
+        planUpdates: normalized.planUpdates,
+        finalResponse: normalized.finalResponse,
+        model,
+        scenario: "prompt-lifecycle",
+        timeline: {
+          startedAt,
+          completedAt: Date.now(),
+          timeoutMs: 0,
+        },
+        completion: {
+          ...normalized.completion,
+          cancelResult: null,
         },
       }
     },
