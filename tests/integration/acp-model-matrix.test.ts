@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { spawnSync } from "node:child_process"
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -83,11 +84,10 @@ describe("ACP model matrix config loader", () => {
   })
 
   test("default config path is resolved independently of process cwd", async () => {
-    const originalCwd = process.cwd()
     const dir = await createTempDir()
-    const filePath = join(originalCwd, "tests", "local", "acp-model-test.config.json")
+    const filePath = join(process.cwd(), "tests", "local", "acp-model-test.config.json")
 
-    await mkdir(join(originalCwd, "tests", "local"), { recursive: true })
+    await mkdir(join(process.cwd(), "tests", "local"), { recursive: true })
     await writeFile(filePath, JSON.stringify({
       baseUrl: "https://api.example.test/from-stable-default",
       apiKey: "stable-default-key",
@@ -95,27 +95,163 @@ describe("ACP model matrix config loader", () => {
       timeoutMs: 6789,
     }))
 
-    process.chdir(dir)
-
     try {
-      const result = await loadModelMatrixConfig({
-        mode: "required",
-      })
+      const modulePath = join(process.cwd(), "tests", "helpers", "acp-model-config.ts")
+      const child = spawnSync(
+        "bun",
+        [
+          "--eval",
+          "process.chdir(process.env.ACP_MODEL_MATRIX_CHILD_CONFIG_DIR ?? process.cwd()); const { loadModelMatrixConfig } = await import(process.env.ACP_MODEL_MATRIX_CHILD_SCRIPT_PATH ?? ''); const result = await loadModelMatrixConfig({ mode: 'required' }); process.stdout.write(JSON.stringify(result));",
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ACP_MODEL_MATRIX_CHILD_SCRIPT_PATH: modulePath,
+            ACP_MODEL_MATRIX_CHILD_CONFIG_DIR: dir,
+          },
+        },
+      )
 
-      expect(result).toEqual({
+      expect(child.stderr).toBe("")
+      expect(child.status).toBe(0)
+      expect(JSON.parse(child.stdout)).toEqual({
         baseUrl: "https://api.example.test/from-stable-default",
         apiKey: "stable-default-key",
         models: ["stable-default-model"],
         timeoutMs: 6789,
       })
     } finally {
-      process.chdir(originalCwd)
       await rm(filePath, { force: true })
     }
   })
 })
 
 describe("ACP model matrix scenario A", () => {
+  test("runPrompt isolates concurrent prompt runs by request", async () => {
+    const server = new ACPServer()
+    let sessionCounter = 0
+    const harness = createACPHarness({
+      server,
+      dispatch: async (request) => {
+        if (request.method === "initialize") {
+          return {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              protocolVersion: "1.0",
+              capabilities: {
+                streaming: true,
+                tools: true,
+                skills: true,
+              },
+              serverInfo: {
+                name: "test-server",
+                version: "0.0.0",
+              },
+            },
+          }
+        }
+
+        if (request.method === "authenticate") {
+          return {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              authenticated: true,
+            },
+          }
+        }
+
+        if (request.method === "session/new") {
+          sessionCounter += 1
+
+          return {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              sessionId: `session-${sessionCounter}`,
+              workspace: `/tmp/workspace-${sessionCounter}`,
+              plan: { entries: [] },
+            },
+          }
+        }
+
+        if (request.method === "session/prompt") {
+          const { sessionId } = request.params
+          const text = sessionId === "session-1" ? "alpha" : "beta"
+          const delay = sessionId === "session-1" ? 20 : 5
+
+          setTimeout(() => {
+            server.onNotification?.({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId,
+                update: {
+                  sessionUpdate: "agent_message_chunk",
+                  content: {
+                    text,
+                  },
+                },
+              },
+            })
+
+            server.onNotification?.({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                stopReason: "end_turn",
+              },
+            })
+          }, delay)
+
+          return {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: null,
+          }
+        }
+
+        throw new Error(`Unexpected method: ${String(request.method)}`)
+      },
+    })
+
+    const firstSession = await harness.start({ cwd: "D:/tmp/acp-matrix-a" })
+    const secondSession = await harness.start({ cwd: "D:/tmp/acp-matrix-b" })
+
+    const [first, second] = await Promise.all([
+      harness.runPrompt({
+        sessionId: firstSession.sessionResult.sessionId,
+        prompt: "Say hello in one word",
+        _meta: {
+          model: "model-a",
+          baseUrl: "https://api.example.test/v1",
+          apiKey: "test-api-key",
+        },
+        scenario: "basic-prompt-completion",
+        timeoutMs: 200,
+      }),
+      harness.runPrompt({
+        sessionId: secondSession.sessionResult.sessionId,
+        prompt: "Say hello in one word",
+        _meta: {
+          model: "model-b",
+          baseUrl: "https://api.example.test/v1",
+          apiKey: "test-api-key",
+        },
+        scenario: "basic-prompt-completion",
+        timeoutMs: 200,
+      }),
+    ])
+
+    expect(first.completion.state).toBe("completed")
+    expect(first.aggregatedText).toBe("alpha")
+    expect(second.completion.state).toBe("completed")
+    expect(second.aggregatedText).toBe("beta")
+  })
+
   test("runPrompt records scenario A metadata for basic prompt completion", async () => {
     const requests: unknown[] = []
     let promptRequestId: string | number | null = null

@@ -81,6 +81,8 @@ type PromptRunCapture = {
   requestId: string | number | null
   notifications: unknown[]
   errors: unknown[]
+  resolveFinalResponse: (response: JsonRpcResponse | null) => void
+  finalResponse: Promise<JsonRpcResponse | null>
 }
 
 function isJsonRpcResponse(message: unknown): message is JsonRpcResponse {
@@ -242,68 +244,132 @@ export function createACPHarness(options?: {
   dispatch?: (request: DispatchRequest) => Promise<DispatchResult>
 }) {
   const server = options?.server ?? new ACPServer()
+  let promptRunCounter = 0
   const dispatch = (request: DispatchRequest) => {
     if (options?.dispatch) return options.dispatch(request)
     return server.dispatch(request)
   }
-  let currentNotifications: unknown[] = []
-  let currentErrors: unknown[] = []
-  let activePromptRun: PromptRunCapture | null = null
+  const collectors = new Set<{
+    notifications: unknown[]
+    errors: unknown[]
+  }>()
+  const promptRunsByRequestId = new Map<string | number | null, PromptRunCapture>()
+  const promptRunsBySessionId = new Map<string, Set<PromptRunCapture>>()
 
-  server.onNotification = (message) => {
-    currentNotifications.push(message)
-
-    if (isJsonRpcResponse(message) && message.error) {
-      currentErrors.push(message)
+  const createCollector = () => {
+    const collector = {
+      notifications: [] as unknown[],
+      errors: [] as unknown[],
     }
 
-    if (activePromptRun && matchesPromptRun(message, activePromptRun)) {
-      activePromptRun.notifications.push(message)
+    collectors.add(collector)
+    return collector
+  }
+
+  const releaseCollector = (collector: {
+    notifications: unknown[]
+    errors: unknown[]
+  }) => {
+    collectors.delete(collector)
+  }
+
+  const registerPromptRun = (run: PromptRunCapture) => {
+    promptRunsByRequestId.set(run.requestId, run)
+
+    const sessionRuns = promptRunsBySessionId.get(run.sessionId) ?? new Set<PromptRunCapture>()
+    sessionRuns.add(run)
+    promptRunsBySessionId.set(run.sessionId, sessionRuns)
+  }
+
+  const releasePromptRun = (run: PromptRunCapture) => {
+    promptRunsByRequestId.delete(run.requestId)
+
+    const sessionRuns = promptRunsBySessionId.get(run.sessionId)
+    if (!sessionRuns) return
+
+    sessionRuns.delete(run)
+    if (sessionRuns.size === 0) {
+      promptRunsBySessionId.delete(run.sessionId)
+    }
+  }
+
+  server.onNotification = (message) => {
+    for (const collector of collectors) {
+      collector.notifications.push(message)
 
       if (isJsonRpcResponse(message) && message.error) {
-        activePromptRun.errors.push(message)
+        collector.errors.push(message)
       }
+    }
+
+    if (isSessionUpdateMessage(message)) {
+      const sessionId = getSessionId(message)
+      if (!sessionId) return
+
+      const runs = promptRunsBySessionId.get(sessionId)
+      if (!runs) return
+
+      for (const run of runs) {
+        run.notifications.push(message)
+      }
+      return
+    }
+
+    if (isJsonRpcResponse(message)) {
+      const run = promptRunsByRequestId.get(message.id ?? null)
+      if (!run) return
+
+      run.notifications.push(message)
+
+      if (message.error) {
+        run.errors.push(message)
+      }
+
+      run.resolveFinalResponse(message)
     }
   }
 
   return {
     async start({ cwd }: { cwd: string }) {
       const startedAt = Date.now()
-      currentNotifications = []
-      currentErrors = []
+      const collector = createCollector()
 
-      const initialize = await dispatch({
-        jsonrpc: "2.0",
-        id: "1",
-        method: "initialize",
-        params: {},
-      }) as JsonRpcSuccess<InitializeResult>
+      try {
+        const initialize = await dispatch({
+          jsonrpc: "2.0",
+          id: "1",
+          method: "initialize",
+          params: {},
+        }) as JsonRpcSuccess<InitializeResult>
 
-      const authenticate = await dispatch({
-        jsonrpc: "2.0",
-        id: "2",
-        method: "authenticate",
-        params: {},
-      }) as JsonRpcSuccess<AuthenticateResult>
+        const authenticate = await dispatch({
+          jsonrpc: "2.0",
+          id: "2",
+          method: "authenticate",
+          params: {},
+        }) as JsonRpcSuccess<AuthenticateResult>
 
-      const session = await dispatch({
-        jsonrpc: "2.0",
-        id: "3",
-        method: "session/new",
-        params: { cwd },
-      }) as JsonRpcSuccess<SessionResult>
+        const session = await dispatch({
+          jsonrpc: "2.0",
+          id: "3",
+          method: "session/new",
+          params: { cwd },
+        }) as JsonRpcSuccess<SessionResult>
 
-      return {
-        initializeResult: initialize.result,
-        authenticateResult: authenticate.result,
-        sessionResult: session.result,
-        notifications: currentNotifications,
-        errors: currentErrors,
-        timeline: {
-          startedAt,
-        },
-        model: null,
-        scenario: "session-bootstrap",
+        return {
+          initializeResult: initialize.result,
+          authenticateResult: authenticate.result,
+          sessionResult: session.result,
+          notifications: [...collector.notifications],
+          errors: [...collector.errors],
+          timeline: {
+            startedAt,
+          },
+          model: null,
+          scenario: "session-bootstrap",
+        }
+      } finally {
+        releaseCollector(collector)
       }
     },
 
@@ -315,27 +381,30 @@ export function createACPHarness(options?: {
       cwd: string
     }) {
       const startedAt = Date.now()
-      currentNotifications = []
-      currentErrors = []
+      const collector = createCollector()
 
-      const session = await dispatch({
-        jsonrpc: "2.0",
-        id: "load-1",
-        method: "session/load",
-        params: {
-          sessionId,
-          cwd,
-        },
-      }) as JsonRpcSuccess<SessionResult>
+      try {
+        const session = await dispatch({
+          jsonrpc: "2.0",
+          id: "load-1",
+          method: "session/load",
+          params: {
+            sessionId,
+            cwd,
+          },
+        }) as JsonRpcSuccess<SessionResult>
 
-      return {
-        sessionResult: session.result,
-        notifications: currentNotifications,
-        errors: currentErrors,
-        timeline: {
-          startedAt,
-        },
-        scenario: "session-bootstrap-load",
+        return {
+          sessionResult: session.result,
+          notifications: [...collector.notifications],
+          errors: [...collector.errors],
+          timeline: {
+            startedAt,
+          },
+          scenario: "session-bootstrap-load",
+        }
+      } finally {
+        releaseCollector(collector)
       }
     },
 
@@ -353,16 +422,20 @@ export function createACPHarness(options?: {
       timeoutMs: number
     }) {
       const startedAt = Date.now()
-      currentNotifications = []
-      currentErrors = []
-
-      const requestId = `prompt-${startedAt}`
-      activePromptRun = {
+      promptRunCounter += 1
+      const requestId = `prompt-${startedAt}-${promptRunCounter}`
+      let resolveFinalResponse!: (response: JsonRpcResponse | null) => void
+      const promptRun: PromptRunCapture = {
         sessionId,
         requestId,
         notifications: [],
         errors: [],
+        finalResponse: new Promise<JsonRpcResponse | null>((resolve) => {
+          resolveFinalResponse = resolve
+        }),
+        resolveFinalResponse: (response) => resolveFinalResponse(response),
       }
+      registerPromptRun(promptRun)
 
       try {
         const promptImmediateResult = await dispatch({
@@ -378,52 +451,23 @@ export function createACPHarness(options?: {
 
         let timedOut = false
         let cancelResult: { cancelled: boolean } | null = null
+        const deadline = setTimeout(() => {
+          timedOut = true
+          cancelResult = { cancelled: false }
+          fireAndForgetCancel(dispatch, requestId, sessionId)
+          promptRun.resolveFinalResponse(null)
+        }, timeoutMs)
+
         const immediateFinalResponse = isJsonRpcResponse(promptImmediateResult) && promptImmediateResult.error
           ? promptImmediateResult
           : null
 
-        const finalResponse = immediateFinalResponse ?? await new Promise<JsonRpcResponse | null>((resolve) => {
-          let settled = false
-          let pollTimer: ReturnType<typeof setTimeout> | undefined
-
-          const findResponse = () => activePromptRun?.notifications.find((message) => {
-            if (!isJsonRpcResponse(message)) return false
-            return message.id === requestId
-          }) as JsonRpcResponse | undefined
-
-          const finish = (value: JsonRpcResponse | null) => {
-            if (settled) return
-            settled = true
-            clearTimeout(deadline)
-            if (pollTimer) clearTimeout(pollTimer)
-            resolve(value)
-          }
-
-          const deadline = setTimeout(() => {
-            timedOut = true
-            cancelResult = { cancelled: false }
-            fireAndForgetCancel(dispatch, requestId, sessionId)
-            finish(null)
-          }, timeoutMs)
-
-          const poll = () => {
-            if (settled) return
-
-            const response = findResponse()
-            if (response) {
-              finish(response)
-              return
-            }
-
-            pollTimer = setTimeout(poll, 5)
-          }
-
-          poll()
-        })
+        const finalResponse = immediateFinalResponse ?? await promptRun.finalResponse
+        clearTimeout(deadline)
 
         const normalized = collectPromptResult({
-          notifications: [...(activePromptRun?.notifications ?? [])],
-          errors: [...(activePromptRun?.errors ?? [])],
+          notifications: [...promptRun.notifications],
+          errors: [...promptRun.errors],
           timedOut,
           finalResponse,
         })
@@ -451,7 +495,7 @@ export function createACPHarness(options?: {
           },
         }
       } finally {
-        activePromptRun = null
+        releasePromptRun(promptRun)
       }
     },
 
@@ -467,16 +511,13 @@ export function createACPHarness(options?: {
       finalResponse?: JsonRpcResponse | null
     }) {
       const startedAt = Date.now()
-      currentNotifications = []
-      currentErrors = []
-
-      for (const notification of notifications) {
-        server.onNotification?.(notification)
-      }
+      const errors = notifications.filter(
+        (message) => isJsonRpcResponse(message) && !!message.error,
+      )
 
       const normalized = collectPromptResult({
-        notifications: [...currentNotifications],
-        errors: [...currentErrors],
+        notifications,
+        errors,
         timedOut: false,
         finalResponse: finalResponse ?? {
           jsonrpc: "2.0",
