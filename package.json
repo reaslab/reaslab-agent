@@ -7,6 +7,7 @@
     "start": "bun run src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test --timeout 30000",
+    "test:acp-matrix": "node -e \"const { spawnSync } = require('node:child_process'); const result = spawnSync('bun', ['test', '--timeout', '120000', 'tests/integration/acp-model-matrix.test.ts'], { stdio: 'inherit', shell: true, env: { ...process.env, ACP_MODEL_MATRIX_MODE: 'required' } }); process.exit(result.status ?? 1)\"",
     "db": "bun drizzle-kit"
   },
   "imports": {

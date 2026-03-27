@@ -1,0 +1,6 @@
+{
+  "baseUrl": "https://api.example.test/v1",
+  "apiKey": "replace-with-local-api-key",
+  "models": ["example-model"],
+  "timeoutMs": 30000
+}
