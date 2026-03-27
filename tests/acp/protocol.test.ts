@@ -147,6 +147,7 @@ describe("ACP Protocol", () => {
         },
       },
     ])
+    expect(msg.params.update.rawOutput).toBe("plain text output")
   })
 
   test("rawOutput undefined still produces valid text content", () => {
@@ -236,6 +237,34 @@ describe("ACP Protocol", () => {
     expect(msg.params.update.locations).toEqual([{ path: "src/index.ts" }])
   })
 
+  test("tool_call_update keeps internal absolute-path fields available when structured output is also present", () => {
+    const msg = ACP.toolCallUpdate(
+      "sess-1",
+      "call-1",
+      "completed",
+      { savedTo: "C:\\repo\\src\\index.ts" },
+      undefined,
+      { workspace: "C:/repo" },
+      { path: "C:\\repo\\src\\index.ts" },
+      {
+        savedTo: "C:\\repo\\src\\index.ts",
+      },
+    )
+
+    expect(msg.params.update.rawOutput).toEqual({ savedTo: "C:\\repo\\src\\index.ts" })
+    expect(msg.params.update.structured).toEqual({ savedTo: "C:\\repo\\src\\index.ts" })
+    expect(msg.params.update.locations).toEqual([{ path: "src/index.ts" }])
+    expect(msg.params.update.content).toEqual([
+      {
+        type: "content",
+        content: {
+          type: "text",
+          text: JSON.stringify({ savedTo: "C:\\repo\\src\\index.ts" }),
+        },
+      },
+    ])
+  })
+
   test("tool_call_update transcript-visible locations text uses slash-normalized display output", () => {
     const msg = ACP.toolCallUpdate(
       "sess-1",
@@ -317,6 +346,21 @@ describe("ACP Protocol", () => {
     })
   })
 
+  test("frontend contract plan entries keep session/update(plan) payload limited to sessionUpdate and entries", () => {
+    const msg = ACP.planUpdate("sess-1", [
+      { content: "Lock frontend plan payload", priority: "high", status: "pending" },
+    ])
+
+    expect(Object.keys(msg.params.update).sort()).toEqual([
+      "entries",
+      "sessionUpdate",
+    ])
+    expect(msg.params.update.sessionUpdate).toBe("plan")
+    expect(msg.params.update.entries).toEqual([
+      { content: "Lock frontend plan payload", priority: "high", status: "pending" },
+    ])
+  })
+
   test("session bootstrap result includes additive plan entries alongside sessionId and workspace", () => {
     const result = ACP.sessionBootstrapResult("sess-1", "/workspace", [
       { content: "Bootstrap entry", priority: "high", status: "pending" },
@@ -329,6 +373,66 @@ describe("ACP Protocol", () => {
         entries: [
           { content: "Bootstrap entry", priority: "high", status: "pending" },
         ],
+      },
+    })
+  })
+
+  test("frontend contract structured tool update keeps additive structured payload nested beside legacy fields", () => {
+    const msg = ACP.toolCallUpdate(
+      "sess-1",
+      "call-1",
+      "completed",
+      "1 todo\nCurrent focus: Lock ACP contract",
+      undefined,
+      undefined,
+      undefined,
+      {
+        todos: [
+          {
+            content: "Lock ACP contract",
+            status: "in_progress",
+            priority: "high",
+          },
+        ],
+        summary: {
+          total: 1,
+          inProgress: 1,
+          pending: 0,
+          completed: 0,
+          cancelled: 0,
+        },
+      },
+    )
+
+    expect(Object.keys(msg.params.update).sort()).toEqual([
+      "content",
+      "locations",
+      "rawOutput",
+      "sessionUpdate",
+      "status",
+      "structured",
+      "toolCallId",
+    ])
+    expect(msg.params.update).toMatchObject({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-1",
+      status: "completed",
+      rawOutput: "1 todo\nCurrent focus: Lock ACP contract",
+      structured: {
+        todos: [
+          {
+            content: "Lock ACP contract",
+            status: "in_progress",
+            priority: "high",
+          },
+        ],
+        summary: {
+          total: 1,
+          inProgress: 1,
+          pending: 0,
+          completed: 0,
+          cancelled: 0,
+        },
       },
     })
   })

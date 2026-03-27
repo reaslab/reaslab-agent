@@ -32,7 +32,7 @@ describe("todo tools", () => {
     rmSync(dataDir, { recursive: true, force: true })
   })
 
-  test("todowrite returns summary output and preserves full todos metadata", async () => {
+  test("todowrite persistence compatibility returns summary output and preserves full todos metadata", async () => {
     await Boot.init(workspace)
 
     await Instance.provide({
@@ -84,11 +84,36 @@ describe("todo tools", () => {
           completed: 0,
           cancelled: 0,
         })
+        expect(await TodoReadTool.init().then((tool) =>
+          tool.execute(
+            {},
+            {
+              sessionID: session.id,
+              messageID: "message-test" as any,
+              agent: "default",
+              abort: new AbortController().signal,
+              messages: [],
+              metadata() {},
+              ask: async () => {},
+            },
+          ),
+        )).toMatchObject({
+          metadata: {
+            todos,
+            summary: {
+              total: 2,
+              inProgress: 1,
+              pending: 1,
+              completed: 0,
+              cancelled: 0,
+            },
+          },
+        })
       },
     })
   })
 
-  test("todowrite excludes cancelled todos from remaining count without current focus", async () => {
+  test("todowrite persistence compatibility excludes cancelled todos from remaining count without current focus", async () => {
     await Boot.init(workspace)
 
     await Instance.provide({
@@ -144,7 +169,7 @@ describe("todo tools", () => {
     })
   })
 
-  test("todoread returns summary output and preserves full todos metadata", async () => {
+  test("todoread persistence compatibility returns summary output and preserves full todos metadata", async () => {
     await Boot.init(workspace)
 
     await Instance.provide({

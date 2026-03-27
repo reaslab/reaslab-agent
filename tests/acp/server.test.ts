@@ -78,6 +78,57 @@ describe("ACPServer", () => {
     expect(loaded.result.plan).toEqual({ entries: [] })
   })
 
+  test("frontend contract session/load exposes bootstrap plan entries only under result.plan.entries", async () => {
+    const server = new ACPServer()
+    const created = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: TEST_WORKSPACE },
+    })
+
+    const sessionId = created.result.sessionId
+
+    await Boot.init(TEST_WORKSPACE)
+    await Instance.provide({
+      directory: TEST_WORKSPACE,
+      fn: async () => {
+        Todo.update({
+          sessionID: sessionId,
+          todos: [
+            {
+              content: "Bootstrap contract entry",
+              status: "pending",
+              priority: "medium",
+            },
+          ],
+        })
+      },
+    })
+
+    const loaded = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "2",
+      method: "session/load",
+      params: { sessionId, cwd: TEST_WORKSPACE },
+    })
+
+    expect(Object.keys(loaded.result).sort()).toEqual([
+      "plan",
+      "sessionId",
+      "workspace",
+    ])
+    expect(Object.keys(loaded.result.plan).sort()).toEqual(["entries"])
+    expect(loaded.result.plan.entries).toEqual([
+      {
+        content: "Bootstrap contract entry",
+        status: "pending",
+        priority: "medium",
+      },
+    ])
+    expect((loaded.result as any).entries).toBeUndefined()
+  })
+
   test("session/load returns current plan state from persisted todos", async () => {
     const server = new ACPServer()
     const created = await server.dispatch({
@@ -187,6 +238,81 @@ describe("ACPServer", () => {
             content: "Load from persisted workspace state",
             status: "in_progress",
             priority: "high",
+          },
+        ],
+      },
+    })
+  })
+
+  test("session/load keeps bootstrap plan state tied to persisted workspace across repeated cwd overrides", async () => {
+    const server = new ACPServer()
+    const persistedWorkspace = "/tmp/repeated-persisted-bootstrap-workspace"
+    const firstOverrideWorkspace = "/tmp/repeated-first-override-workspace"
+    const secondOverrideWorkspace = "/tmp/repeated-second-override-workspace"
+
+    const created = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: persistedWorkspace },
+    })
+
+    const sessionId = created.result.sessionId
+
+    await Boot.init(persistedWorkspace)
+    await Instance.provide({
+      directory: persistedWorkspace,
+      fn: async () => {
+        Todo.update({
+          sessionID: sessionId,
+          todos: [
+            {
+              content: "Persisted workspace remains bootstrap source",
+              status: "pending",
+              priority: "medium",
+            },
+          ],
+        })
+      },
+    })
+
+    const loadedOnce = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "2",
+      method: "session/load",
+      params: { sessionId, cwd: firstOverrideWorkspace },
+    })
+
+    const loadedTwice = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "3",
+      method: "session/load",
+      params: { sessionId, cwd: secondOverrideWorkspace },
+    })
+
+    expect(loadedOnce.result).toEqual({
+      sessionId,
+      workspace: firstOverrideWorkspace,
+      plan: {
+        entries: [
+          {
+            content: "Persisted workspace remains bootstrap source",
+            status: "pending",
+            priority: "medium",
+          },
+        ],
+      },
+    })
+
+    expect(loadedTwice.result).toEqual({
+      sessionId,
+      workspace: secondOverrideWorkspace,
+      plan: {
+        entries: [
+          {
+            content: "Persisted workspace remains bootstrap source",
+            status: "pending",
+            priority: "medium",
           },
         ],
       },
@@ -421,13 +547,24 @@ describe("ACPServer", () => {
       })
     })
 
-    test("keeps structured prompt arrays in normal prompt mode", () => {
+    test("recognizes single-text-block structured prompt arrays as slash commands", () => {
       const server = new ACPServer()
       const prompt = [{ type: "text", text: "/init" }]
 
       expect((server as any).resolvePromptInvocation(prompt)).toEqual({
+        type: "command",
+        command: "init",
+        arguments: "",
+      })
+    })
+
+    test("keeps multi-block structured prompt arrays in normal prompt mode", () => {
+      const server = new ACPServer()
+      const prompt = [{ type: "text", text: "/init" }, { type: "text", text: "extra" }]
+
+      expect((server as any).resolvePromptInvocation(prompt)).toEqual({
         type: "prompt",
-        parts: [{ type: "text", text: "/init" }],
+        parts: [{ type: "text", text: "/init" }, { type: "text", text: "extra" }],
       })
     })
   })
@@ -616,6 +753,7 @@ describe("ACPServer", () => {
         _meta: {
           source: "mainagent",
           agent_name: "default",
+          workspace: TEST_WORKSPACE,
         },
       },
     })
@@ -669,6 +807,7 @@ describe("ACPServer", () => {
         _meta: {
           source: "mainagent",
           agent_name: "default",
+          workspace: "C:/repo",
         },
       },
     })
@@ -734,9 +873,10 @@ describe("ACPServer", () => {
           _meta: {
             source: "mainagent",
             agent_name: "default",
+            workspace: TEST_WORKSPACE,
           },
-        },
-      })
+      },
+    })
       expect(notifications).toContainEqual({
         jsonrpc: "2.0",
         id: "2",
@@ -1016,6 +1156,7 @@ describe("ACPServer", () => {
           _meta: {
             source: "mainagent",
             agent_name: "default",
+            workspace: TEST_WORKSPACE,
           },
         },
       })
@@ -1700,6 +1841,332 @@ describe("ACPServer", () => {
     }
   })
 
+  test("session/prompt routes single-text-block structured /init through SessionPrompt.command", async () => {
+    const server = new ACPServer()
+
+    const sess = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: TEST_WORKSPACE },
+    })
+
+    const commandCalls: CommandInput[] = []
+    const promptCalls: PromptInput[] = []
+    const originalCommand = SessionPrompt.command
+    const originalPrompt = SessionPrompt.prompt
+
+    SessionPrompt.command = async (input) => {
+      commandCalls.push(input)
+      return {
+        info: { id: MessageID.ascending() } as PromptResult["info"],
+      } as PromptResult
+    }
+    SessionPrompt.prompt = async (input) => {
+      promptCalls.push(input)
+      return {
+        info: { id: MessageID.ascending() } as PromptResult["info"],
+        parts: input.parts,
+      } as PromptResult
+    }
+
+    try {
+      const result = await server.dispatch({
+        jsonrpc: "2.0",
+        id: "2",
+        method: "session/prompt",
+        params: {
+          sessionId: sess.result.sessionId,
+          prompt: [{ type: "text", text: "/init" }],
+          _meta: {
+            model: "test-model",
+            baseUrl: "http://localhost",
+            apiKey: "test-key",
+          },
+        },
+      })
+
+      expect(result.result).toBeNull()
+      await waitFor(() => commandCalls.length === 1)
+      expect(commandCalls).toHaveLength(1)
+      expect(promptCalls).toHaveLength(0)
+      expect(commandCalls[0]?.command).toBe("init")
+      expect(commandCalls[0]?.arguments).toBe("")
+      expect(commandCalls[0]?.sessionID).toBe(sess.result.sessionId)
+    } finally {
+      SessionPrompt.command = originalCommand
+      SessionPrompt.prompt = originalPrompt
+    }
+  })
+
+  test("rehydration uses persisted todos instead of replayed notifications", async () => {
+    const workspace = "/tmp/rehydration-source-of-truth-workspace"
+    const server = new ACPServer()
+
+    const created = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: workspace },
+    })
+
+    const sessionId = created.result.sessionId
+
+    await Boot.init(workspace)
+    await Instance.provide({
+      directory: workspace,
+      fn: async () => {
+        Todo.update({
+          sessionID: sessionId,
+          todos: [
+            {
+              content: "Persisted rehydration state",
+              status: "pending",
+              priority: "high",
+            },
+          ],
+        })
+      },
+    })
+
+    const notifications: any[] = []
+    const reloadedServer = new ACPServer()
+    reloadedServer.onNotification = (msg) => notifications.push(msg)
+
+    const loaded = await reloadedServer.dispatch({
+      jsonrpc: "2.0",
+      id: "2",
+      method: "session/load",
+      params: { sessionId, cwd: workspace },
+    })
+
+    await Instance.provide({
+      directory: workspace,
+      fn: async () => {
+        Todo.update({
+          sessionID: sessionId,
+          todos: [
+            {
+              content: "Replay should not rehydrate session state",
+              status: "in_progress",
+              priority: "low",
+            },
+          ],
+        })
+      },
+    })
+
+    expect(loaded.result.plan).toEqual({
+      entries: [
+        {
+          content: "Persisted rehydration state",
+          status: "pending",
+          priority: "high",
+        },
+      ],
+    })
+    expect(planUpdates(notifications)).toEqual([])
+  })
+
+  test("session scope load and switch returns the correct session-scoped plan state", async () => {
+    const server = new ACPServer()
+    const workspace = "/tmp/session-scope-switch-workspace"
+
+    const first = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: workspace },
+    })
+    const second = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "2",
+      method: "session/new",
+      params: { cwd: workspace },
+    })
+
+    await Boot.init(workspace)
+    await Instance.provide({
+      directory: workspace,
+      fn: async () => {
+        Todo.update({
+          sessionID: first.result.sessionId,
+          todos: [
+            {
+              content: "First session plan",
+              status: "in_progress",
+              priority: "high",
+            },
+          ],
+        })
+        Todo.update({
+          sessionID: second.result.sessionId,
+          todos: [
+            {
+              content: "Second session plan",
+              status: "pending",
+              priority: "medium",
+            },
+          ],
+        })
+      },
+    })
+
+    const firstLoad = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "3",
+      method: "session/load",
+      params: { sessionId: first.result.sessionId, cwd: "/tmp/session-scope-override-a" },
+    })
+    const secondLoad = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "4",
+      method: "session/load",
+      params: { sessionId: second.result.sessionId, cwd: "/tmp/session-scope-override-b" },
+    })
+    const firstReload = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "5",
+      method: "session/load",
+      params: { sessionId: first.result.sessionId, cwd: "/tmp/session-scope-override-c" },
+    })
+
+    expect(firstLoad.result).toEqual({
+      sessionId: first.result.sessionId,
+      workspace: "/tmp/session-scope-override-a",
+      plan: {
+        entries: [
+          {
+            content: "First session plan",
+            status: "in_progress",
+            priority: "high",
+          },
+        ],
+      },
+    })
+    expect(secondLoad.result).toEqual({
+      sessionId: second.result.sessionId,
+      workspace: "/tmp/session-scope-override-b",
+      plan: {
+        entries: [
+          {
+            content: "Second session plan",
+            status: "pending",
+            priority: "medium",
+          },
+        ],
+      },
+    })
+    expect(firstReload.result).toEqual({
+      sessionId: first.result.sessionId,
+      workspace: "/tmp/session-scope-override-c",
+      plan: {
+        entries: [
+          {
+            content: "First session plan",
+            status: "in_progress",
+            priority: "high",
+          },
+        ],
+      },
+    })
+  })
+
+  test("child session rehydration does not overwrite parent session plan state", async () => {
+    const workspace = "/tmp/child-session-rehydration-workspace"
+    const server = new ACPServer()
+
+    const parent = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "session/new",
+      params: { cwd: workspace },
+    })
+
+    await Boot.init(workspace)
+
+    const child = await Instance.provide({
+      directory: workspace,
+      fn: async () => Session.createNext({
+        directory: workspace,
+        parentID: parent.result.sessionId,
+      }),
+    })
+
+    await Instance.provide({
+      directory: workspace,
+      fn: async () => {
+        Todo.update({
+          sessionID: parent.result.sessionId,
+          todos: [
+            {
+              content: "Parent persisted plan",
+              status: "in_progress",
+              priority: "high",
+            },
+          ],
+        })
+        Todo.update({
+          sessionID: child.id,
+          todos: [
+            {
+              content: "Child persisted plan",
+              status: "pending",
+              priority: "low",
+            },
+          ],
+        })
+      },
+    })
+
+    const parentLoad = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "2",
+      method: "session/load",
+      params: { sessionId: parent.result.sessionId, cwd: workspace },
+    })
+    const childLoad = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "3",
+      method: "session/load",
+      params: { sessionId: child.id, cwd: workspace },
+    })
+    const parentReload = await server.dispatch({
+      jsonrpc: "2.0",
+      id: "4",
+      method: "session/load",
+      params: { sessionId: parent.result.sessionId, cwd: workspace },
+    })
+
+    expect(parentLoad.result.plan).toEqual({
+      entries: [
+        {
+          content: "Parent persisted plan",
+          status: "in_progress",
+          priority: "high",
+        },
+      ],
+    })
+    expect(childLoad.result.plan).toEqual({
+      entries: [
+        {
+          content: "Child persisted plan",
+          status: "pending",
+          priority: "low",
+        },
+      ],
+    })
+    expect(parentReload.result.plan).toEqual({
+      entries: [
+        {
+          content: "Parent persisted plan",
+          status: "in_progress",
+          priority: "high",
+        },
+      ],
+    })
+  })
+
   test("todo structured tool update preserves legacy string output", async () => {
     const server = new ACPServer()
     const notifications: any[] = []
@@ -1848,6 +2315,31 @@ describe("ACPServer", () => {
           },
         },
       })
+
+      const update = notifications.find(
+        (msg) =>
+          msg?.method === "session/update" &&
+          msg?.params?.update?.sessionUpdate === "tool_call_update" &&
+          msg?.params?.update?.toolCallId === "todo-structured-call",
+      )
+
+      expect(Object.keys(update.params.update).sort()).toEqual([
+        "content",
+        "locations",
+        "rawOutput",
+        "sessionUpdate",
+        "status",
+        "structured",
+        "toolCallId",
+      ])
+      expect(update.params.update.rawOutput).toBe(update.params.update.content[0].content.text)
+      expect(update.params.update.structured.todos).toEqual([
+        {
+          content: "Project structured todo payloads",
+          status: "in_progress",
+          priority: "high",
+        },
+      ])
     } finally {
       ;(SessionPrompt as any).prompt = originalPrompt
     }
@@ -2148,6 +2640,30 @@ describe("ACPServer", () => {
           },
         },
       })
+
+      const taskUpdate = notifications.find(
+        (msg) =>
+          msg?.method === "session/update" &&
+          msg?.params?.update?.sessionUpdate === "tool_call_update" &&
+          msg?.params?.update?.toolCallId === "task-structured-call",
+      )
+      const emptyTaskUpdate = notifications.find(
+        (msg) =>
+          msg?.method === "session/update" &&
+          msg?.params?.update?.sessionUpdate === "tool_call_update" &&
+          msg?.params?.update?.toolCallId === "task-empty-structured-call",
+      )
+
+      expect(taskUpdate.params.update.rawOutput).toBe(taskUpdate.params.update.content[0].content.text)
+      expect(taskUpdate.params.update.structured.resumable.task_id).toBe("child-session-123")
+      expect(taskUpdate.params.update.rawOutput).toContain(
+        `task_id: ${taskUpdate.params.update.structured.resumable.task_id}`,
+      )
+      expect(emptyTaskUpdate.params.update.rawOutput).toBe(emptyTaskUpdate.params.update.content[0].content.text)
+      expect(emptyTaskUpdate.params.update.structured.resumable.task_id).toBe("child-session-empty")
+      expect(emptyTaskUpdate.params.update.rawOutput).toContain(
+        `task_id: ${emptyTaskUpdate.params.update.structured.resumable.task_id}`,
+      )
     } finally {
       ;(SessionPrompt as any).prompt = originalPrompt
     }
@@ -2416,6 +2932,8 @@ describe("ACPServer", () => {
       expect(toolCall.params.update.rawInput).toEqual({ file: "notes.txt" })
       expect(toolCall.params.update.title).toBe("workspace-sync: notes.txt")
       expect(toolCall.params.update.locations).toEqual([{ path: "notes.txt" }])
+      expect(toolCall.params.update.locations[0].path.includes("\\")).toBe(false)
+      expect(toolCall.params.update.title.includes("C:")).toBe(false)
       expect(toolUpdate.params.update.rawOutput).toBe("File synced by external tool")
       expect(toolUpdate.params.update.locations).toEqual([{ path: "notes.txt" }])
       expect(toolUpdate.params.update.content).toEqual([

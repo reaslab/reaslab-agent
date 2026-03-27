@@ -80,6 +80,7 @@ export namespace ACP {
 
   /** Create agent_message_chunk notification */
   export function messageChunk(sessionId: string, text: string, meta?: Partial<UpdateMeta>) {
+    const workspace = typeof meta?.workspace === "string" ? meta.workspace : undefined
     return {
       jsonrpc: "2.0" as const,
       method: "session/update",
@@ -87,7 +88,7 @@ export namespace ACP {
         sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text },
+          content: { type: "text", text: relativizeText(text, workspace) },
         },
         _meta: { ...DEFAULT_META, ...meta },
       },

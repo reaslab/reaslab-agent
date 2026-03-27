@@ -228,7 +228,7 @@ describe("TaskTool", () => {
     return line.slice("task_id: ".length).split(" ")[0]
   }
 
-  test("fresh subagent invocation creates a child session", async () => {
+  test("fresh subagent invocation creates a child session with compatibility-visible task_id", async () => {
     await withinInstance(async () => {
       const parent = await createExecutionContext()
       const { result, metadataCalls } = await executeTask({}, parent)
@@ -240,6 +240,7 @@ describe("TaskTool", () => {
       expect(result.output).not.toContain("<task_result>")
       expect(result.output).not.toContain("</task_result>")
       expect(result.output).toContain("subagent ok")
+      expect(parseTaskID(result.output)).toBe(childID)
       expect(result.metadata.sessionId).toBe(childID)
       expect(result.metadata.model).toEqual({
         modelID: MODEL_ID,
@@ -269,6 +270,7 @@ describe("TaskTool", () => {
           },
         },
       ])
+      expect(result.metadata.resumable.task_id).toBe(parseTaskID(result.output))
       expect(promptCallCount).toBe(1)
     })
   })
@@ -288,6 +290,29 @@ describe("TaskTool", () => {
       expect(childSessionsBeforeResume.map((child) => child.id)).toEqual([SessionID.make(childID)])
       expect(childSessionsAfterResume.map((child) => child.id)).toEqual([SessionID.make(childID)])
       expect(promptCallCount).toBe(2)
+    })
+  })
+
+  test("task_id remains parseable when task output is otherwise empty", async () => {
+    await withinInstance(async () => {
+      const parent = await createExecutionContext()
+      ;(SessionPrompt as any).prompt = async ({ messageID, sessionID }: { messageID: MessageID; sessionID: SessionID }) => {
+        promptCallCount += 1
+        const result = {
+          ...createPromptResult({ messageID, sessionID }),
+          parts: [],
+        }
+        await Session.updateMessage(result.info)
+        return result
+      }
+
+      const { result } = await executeTask({}, parent)
+      const childID = parseTaskID(result.output)
+
+      expect(childID).toBe(result.metadata.taskID)
+      expect(result.metadata.resumable).toEqual({ task_id: childID })
+      expect(result.output).toBe(`task_id: ${childID} (for resuming to continue this task if needed)\n\n`)
+      expect(promptCallCount).toBe(1)
     })
   })
 

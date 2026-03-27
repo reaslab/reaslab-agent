@@ -18,6 +18,7 @@ import { WorkspaceDiffer } from "./workspace-diff"
 import path from "path"
 import { Todo } from "../session/todo"
 import { todoToPlanEntries } from "./plan"
+import { DebugTrace } from "@/util/debug-trace"
 
 const PROTOCOL_VERSION = "0.1.0"
 
@@ -30,6 +31,7 @@ function normalizeEmittedPath(pathValue: string, workspace?: string) {
 interface SessionState {
   id: string
   workspace: string
+  persistedWorkspace: string
   mcpServers: MCPServerConfig[]
   abortController?: AbortController
 }
@@ -153,6 +155,7 @@ export class ACPServer {
     const session: SessionState = {
       id: sessionInfo.id,
       workspace,
+      persistedWorkspace: workspace,
       mcpServers: (params.mcpServers as MCPServerConfig[]) || [],
     }
     this.sessions.set(session.id, session)
@@ -164,7 +167,6 @@ export class ACPServer {
     if (!sessionId) throw new Error("sessionId is required")
 
     let session = this.sessions.get(sessionId)
-    let persistedWorkspace = session?.workspace
     if (!session) {
       const workspace = (params.cwd as string) || "/workspace"
       await Boot.init(workspace)
@@ -175,16 +177,14 @@ export class ACPServer {
       session = {
         id: dbSession.id,
         workspace: dbSession.directory,
+        persistedWorkspace: dbSession.directory,
         mcpServers: [],
       }
-      persistedWorkspace = dbSession.directory
       this.sessions.set(session.id, session)
     }
 
-    persistedWorkspace ||= session.workspace
-
     const entries = await Instance.provide({
-      directory: persistedWorkspace,
+      directory: session.persistedWorkspace,
       fn: async () => todoToPlanEntries(Todo.get(session.id as SessionID)),
     })
 
@@ -254,25 +254,38 @@ export class ACPServer {
 
   // --- Prompt parsing ---
 
+  private extractSlashCandidate(prompt: string | unknown[]): string | undefined {
+    if (typeof prompt === "string") return prompt
+    if (!Array.isArray(prompt) || prompt.length !== 1) return undefined
+
+    const [block] = prompt
+    if (!block || typeof block !== "object" || !("type" in block) || !("text" in block)) return undefined
+    if (block.type !== "text" || typeof block.text !== "string") return undefined
+
+    return block.text
+  }
+
   private resolvePromptInvocation(prompt: string | unknown[]): PromptInvocation {
-    if (typeof prompt !== "string") {
+    const slashCandidate = this.extractSlashCandidate(prompt)
+
+    if (slashCandidate === undefined) {
       return {
         type: "prompt",
         parts: this.parsePromptToInputParts(prompt),
       }
     }
 
-    if (!prompt.startsWith("/")) {
+    if (!slashCandidate.startsWith("/")) {
       return {
         type: "prompt",
         parts: this.parsePromptToInputParts(prompt),
       }
     }
 
-    const newlineIndex = prompt.indexOf("\n")
+    const newlineIndex = slashCandidate.indexOf("\n")
     const hasMultilineBody = newlineIndex !== -1
-    const firstLine = hasMultilineBody ? prompt.slice(0, newlineIndex) : prompt
-    const remaining = hasMultilineBody ? prompt.slice(newlineIndex + 1) : ""
+    const firstLine = hasMultilineBody ? slashCandidate.slice(0, newlineIndex) : slashCandidate
+    const remaining = hasMultilineBody ? slashCandidate.slice(newlineIndex + 1) : ""
     const withoutSlash = firstLine.slice(1)
     const firstWhitespace = withoutSlash.search(/\s/)
     const command = firstWhitespace === -1
@@ -411,6 +424,12 @@ export class ACPServer {
           if (event.properties.sessionID !== sessionId) return
           const message = event.properties.error?.data?.message || "Unknown error"
           sessionErrorMessage = message
+          void DebugTrace.write("acp.session.error", {
+            sessionID: sessionId,
+            message,
+            errorName: event.properties.error?.name,
+            errorData: event.properties.error?.data,
+          })
           this._notify(ACP.messageChunk(sessionId, `\n[Agent error: ${message}]\n`, { workspace: session.workspace }))
         })
 
