@@ -27,6 +27,10 @@ export namespace ACP {
     if (ACTION_TOOLS.has(name)) {
       return "action"
     }
+    // Todo/plan tools - must return "plan" for frontend to display plan UI
+    if (name.includes("todo")) {
+      return "plan"
+    }
     // Write/edit tools
     if (name.includes("write") || name.includes("edit") || name.includes("apply_patch") || name.includes("multiedit")) {
       return "edit"
@@ -41,7 +45,7 @@ export namespace ACP {
     }
     // Think/plan tools
     if (name.includes("think") || name.includes("plan")) {
-      return "think"
+      return "plan"
     }
     // Read tools
     if (name.includes("read") || name.includes("fetch")) {

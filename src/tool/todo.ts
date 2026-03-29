@@ -14,20 +14,9 @@ function summarizeTodos(todos: Todo.Info[]) {
   const openCount = todos.filter(
     (todo) => todo.status !== "completed" && todo.status !== "cancelled",
   ).length
-  const lines = [`${openCount} ${openCount === 1 ? "todo" : "todos"}`]
-  const inProgress = todos.find((todo) => todo.status === "in_progress")
 
-  if (inProgress) {
-    lines.push(`Current focus: ${inProgress.content}`)
-    lines.push(`In progress: ${summary.inProgress}`)
-    lines.push(`Pending: ${summary.pending}`)
-  } else {
-    lines.push(`Pending: ${summary.pending}`)
-    lines.push(`In progress: ${summary.inProgress}`)
-  }
-
-  lines.push(`Completed: ${summary.completed}`)
-  lines.push(`Cancelled: ${summary.cancelled}`)
+  // Format for frontend parsing: "1. [status] description"
+  const lines = todos.map((todo, index) => `${index + 1}. [${todo.status}] ${todo.content}`)
 
   return {
     output: lines.join("\n"),
