@@ -12,6 +12,7 @@ import type { MessageV2 } from "./message-v2"
 const log = Log.create({ service: "instruction" })
 
 const FILES = [
+  "REASLAB.md",
   "AGENTS.md",
   "CLAUDE.md",
   "CONTEXT.md", // deprecated
@@ -85,12 +86,13 @@ export namespace InstructionPrompt {
       }
     }
 
-    for (const file of globalFiles()) {
-      if (await Filesystem.exists(file)) {
-        paths.add(path.resolve(file))
-        break
-      }
-    }
+    // Temporarily disabled: global config file lookup
+    // for (const file of globalFiles()) {
+    //   if (await Filesystem.exists(file)) {
+    //     paths.add(path.resolve(file))
+    //     break
+    //   }
+    // }
 
     if ((config as any).instructions) {
       for (let instruction of (config as any).instructions as string[]) {

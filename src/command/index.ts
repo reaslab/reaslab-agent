@@ -99,7 +99,7 @@ export namespace Command {
 
         commands[Default.INIT] = {
           name: Default.INIT,
-          description: "create/update AGENTS.md",
+          description: "create/update REASLAB.md",
           source: "command",
           get template() {
             return PROMPT_INITIALIZE.replace("${path}", ctx.worktree)
