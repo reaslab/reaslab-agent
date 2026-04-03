@@ -40,6 +40,11 @@ function resolveWatchDirs(directory: string, config?: Config.SkillsConfig): stri
   // Project skills dir
   dirs.add(path.join(directory, "skills"))
 
+  // Project-level .claude/skills and .agents/skills (walk from directory up to worktree root)
+  for (const dir of EXTERNAL_DIRS) {
+    dirs.add(path.join(directory, dir, "skills"))
+  }
+
   // Built-in skills dir (packaged in Docker image at /app/skills)
   const builtinSkillsDir = path.resolve(__dirname, "..", "..", "skills")
   dirs.add(builtinSkillsDir)
@@ -113,7 +118,12 @@ export function ensureSkillsWatcher(params: {
       state.timer = undefined
       log.info("SKILL.md changed, bumping version", { path: pendingPath })
       Skill.markNeedsReload(directory)
-      Skill.bumpVersion()
+      try {
+        Skill.bumpVersion()
+      } catch {
+        // bumpVersion() requires Instance context; outside it, the reload
+        // flag alone is enough — ensure() will bump after re-scan.
+      }
     }, debounceMs)
   }
 

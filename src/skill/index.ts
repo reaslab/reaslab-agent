@@ -81,6 +81,7 @@ export namespace Skill {
     skills: Record<string, Info>
     dirs: Set<string>
     task?: Promise<void>
+    lastLoadMs: number
   }
 
   type Cache = State & {
@@ -157,6 +158,11 @@ export namespace Skill {
   /** Mark a directory's skills as needing reload; next ensure() will re-scan. */
   export function markNeedsReload(directory: string): void {
     needsReloadDirs.add(directory)
+  }
+
+  /** Check if a directory has pending reload (used by SystemPrompt cache). */
+  export function hasNeedsReload(directory: string): boolean {
+    return needsReloadDirs.has(directory)
   }
 
   const parseInfo = (location: string, md: { data: unknown; content: string }) => {
@@ -587,11 +593,34 @@ export namespace Skill {
     return runtimeState().get(name, scope, opts)
   }
 
+  /** Quick stat-based check: have any known skill files changed since last load? */
+  function skillFilesChanged(state: State): boolean {
+    const since = state.lastLoadMs
+    // Check known skill files for content modifications or deletions
+    for (const skill of Object.values(state.skills)) {
+      try {
+        const stat = fs.statSync(skill.location)
+        if (stat.mtimeMs > since) return true
+      } catch {
+        return true // file was deleted
+      }
+    }
+    // Check skill directories for new/removed files (dir mtime changes on add/unlink)
+    for (const dir of state.dirs) {
+      try {
+        const stat = fs.statSync(dir)
+        if (stat.mtimeMs > since) return true
+      } catch {}
+    }
+    return false
+  }
+
   // TODO: Migrate to Effect
   const create = (discovery: Discovery.Interface, directory: string, worktree: string): Cache => {
     const state: State = {
       skills: {},
       dirs: new Set<string>(),
+      lastLoadMs: 0,
     }
 
     const load = async () => {
@@ -659,9 +688,27 @@ export namespace Skill {
         state.dirs.clear()
       }
 
+      // Poll-based staleness fallback: if enough time has passed since last load,
+      // stat known skill files to detect changes the watcher may have missed.
+      const pollInterval = Config.get().skills?.stalePollIntervalMs ?? 10_000
+      if (state.task && pollInterval > 0 && state.lastLoadMs > 0 && Date.now() - state.lastLoadMs > pollInterval) {
+        if (skillFilesChanged(state)) {
+          log.info("poll detected stale skills, forcing reload")
+          state.task = undefined
+          for (const key of Object.keys(state.skills)) delete state.skills[key]
+          state.dirs.clear()
+          needsReloadDirs.delete(directory)
+        } else {
+          // No changes detected — push lastLoadMs forward to avoid re-checking too often
+          state.lastLoadMs = Date.now()
+        }
+      }
+
       if (state.task) return state.task
+      state.lastLoadMs = Date.now()
       state.task = load()
         .then(() => {
+          state.lastLoadMs = Date.now()
           bumpVersion()
         })
         .catch((err) => {

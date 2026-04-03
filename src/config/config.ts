@@ -22,6 +22,8 @@ export namespace Config {
     watch?: boolean
     /** Debounce interval in ms for file watch events (default: 250) */
     watchDebounceMs?: number
+    /** Poll interval in ms to check for SKILL.md changes as fallback when watcher misses events (default: 10000, 0 to disable) */
+    stalePollIntervalMs?: number
   }
 
   export interface AppConfig {

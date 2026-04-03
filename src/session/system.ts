@@ -77,7 +77,10 @@ export namespace SystemPrompt {
     const cache = snapshotCache()
     const cached = cache.get(cacheKey)
 
-    if (cached && cached.version >= currentVersion && currentVersion > 0) {
+    // Skip cache if skill files changed on disk (needsReload flag set by watcher)
+    const needsReload = Skill.hasNeedsReload(Instance.directory)
+
+    if (!needsReload && cached && cached.version >= currentVersion && currentVersion > 0) {
       return cached.prompt
     }
 
