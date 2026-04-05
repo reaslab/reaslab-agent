@@ -9,6 +9,10 @@ export namespace ProviderQuirks {
    */
   export function requiresSystemAsUser(providerID: string): boolean {
     const id = providerID.toLowerCase()
-    return id.includes("deepseek")
+    // Most third-party API relays don't support the 'developer' role
+    // that AI SDK converts 'system' to. Default to true unless using
+    // direct OpenAI or Anthropic APIs.
+    if (id.includes("openai.com") || id.includes("anthropic")) return false
+    return true
   }
 }

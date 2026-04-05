@@ -236,7 +236,13 @@ export namespace ACP {
 
   /** Extract a human-readable title from tool name + input args */
   export function toolTitle(toolName: string, rawInput: Record<string, unknown>, workspace?: string): string {
-    // For MCP tools (contain underscore namespacing), just show the tool name
+    // For MCP tools with server prefix (e.g., py_run_python, tex_compile_latex, lean_infoview, mem_read_memory)
+    // Display the part after the prefix for readability
+    const mcpPrefixes = ["py_", "tex_", "lean_", "mem_"]
+    for (const prefix of mcpPrefixes) {
+      if (toolName.startsWith(prefix)) return toolName.slice(prefix.length)
+    }
+    // Legacy MCP naming fallback
     if (toolName.includes("_mcp_") || toolName.startsWith("mcp_")) return toolName
 
     const filePath = relativePath((rawInput.filePath ?? rawInput.path ?? rawInput.file ?? "") as string, workspace)

@@ -136,6 +136,31 @@ export class ACPServer {
         name: "reaslab-agent",
         version: PROTOCOL_VERSION,
       },
+      configSchema: {
+        type: "object",
+        properties: {
+          systemPrompt: {
+            type: "string",
+            title: "System Prompt",
+            description: "Custom system prompt for the agent",
+          },
+          maxIterations: {
+            type: "number",
+            title: "Max Iterations",
+            description: "Maximum number of agent loop iterations",
+            default: 200,
+            minimum: 1,
+            maximum: 1000,
+          },
+          reasoningEffort: {
+            type: "string",
+            title: "Reasoning Effort",
+            description: "Level of reasoning effort",
+            enum: ["low", "medium", "high"],
+            default: "high",
+          },
+        },
+      },
     }
   }
 
