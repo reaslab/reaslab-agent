@@ -5,8 +5,8 @@ dist
 .env
 .env.*
 data/
-migration/
 .worktrees/
 test/
 tests/local/acp-model-test.config.json
 tmp
+
