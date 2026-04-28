@@ -13,13 +13,23 @@ import { Filesystem } from "@/util/filesystem"
 import { fileURLToPath } from "url"
 import { Flag } from "@/flag/flag"
 import { Shell } from "@/shell/shell"
+import { ACPAgentConfig } from "@/acp/agent-config"
 
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncate"
 import { Plugin } from "@/plugin"
 
 const MAX_METADATA_LENGTH = 30_000
-const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
+const ENV_DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
+
+function getDefaultTimeout(): number {
+  const configs = ACPAgentConfig()
+  const sessionId = Object.keys(configs)[0]
+  if (sessionId && configs[sessionId]?.bashTimeoutMs) {
+    return configs[sessionId].bashTimeoutMs!
+  }
+  return ENV_DEFAULT_TIMEOUT
+}
 
 const WORKSPACE_WRITE_PATTERNS = [
   /(^|[^-])>(?![=])/,
@@ -95,7 +105,7 @@ export const BashTool = Tool.define("bash", async () => {
       if (params.timeout !== undefined && params.timeout < 0) {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
       }
-      const timeout = params.timeout ?? DEFAULT_TIMEOUT
+      const timeout = params.timeout ?? getDefaultTimeout()
 
       if (collaborativeMode && Filesystem.contains(Instance.directory, cwd)) {
         const commandText = params.command

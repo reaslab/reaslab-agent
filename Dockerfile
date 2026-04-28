@@ -11,6 +11,7 @@ COPY src/ ./src/
 COPY skills/ ./skills/
 COPY migration/ ./migration/
 COPY drizzle.config.ts ./
+COPY agent-schema.json /agent-schema.json
 
 # Create data directory for SQLite
 RUN mkdir -p /app/data

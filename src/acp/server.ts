@@ -8,16 +8,19 @@ import { Boot } from "../boot"
 import { MCP } from "../mcp"
 import { Instance } from "../project/instance"
 import { decodeToolOutput, projectStructuredToolPayload } from "./builtin-tools"
+import agentSchema from "../../agent-schema.json"
 import { Session } from "../session"
 import { SessionPrompt } from "../session/prompt"
 import { MessageV2 } from "../session/message-v2"
 import { Bus } from "../bus"
 import { ACPProviderMeta } from "./provider-meta"
+import { ACPAgentConfig, type AgentConfig } from "./agent-config"
 import { MessageID, type SessionID } from "../session/schema"
 import { WorkspaceDiffer } from "./workspace-diff"
 import path from "path"
 import { Todo } from "../session/todo"
 import { todoToPlanEntries } from "./plan"
+import { childSessionRegistry } from "./subagent-registry"
 
 const PROTOCOL_VERSION = "0.1.0"
 
@@ -136,6 +139,7 @@ export class ACPServer {
         name: "reaslab-agent",
         version: PROTOCOL_VERSION,
       },
+      configSchema: agentSchema,
     }
   }
 
@@ -217,9 +221,17 @@ export class ACPServer {
       throw new Error("_meta must include model, baseUrl, and apiKey")
     }
 
+    const agentConfig: AgentConfig = {}
+    if (meta.agent_config && typeof meta.agent_config === "object") {
+      const cfg = meta.agent_config as Record<string, unknown>
+      if (typeof cfg.bashTimeoutMs === "number") {
+        agentConfig.bashTimeoutMs = cfg.bashTimeoutMs
+      }
+    }
+
     const turn = this.claimTurn(session)
 
-    this.executeAgentLoop(session, invocation, providerMeta, requestId)
+    this.executeAgentLoop(session, invocation, providerMeta, agentConfig, requestId)
       .catch((err) => {
         console.error(`[acp] agent loop error for ${sessionId}:`, err)
         if (err instanceof Session.BusyError) {
@@ -328,6 +340,7 @@ export class ACPServer {
     session: SessionState,
     invocation: PromptInvocation,
     providerMeta: ProviderMeta,
+    agentConfig: AgentConfig,
     requestId: string | number,
   ): Promise<void> {
     await Boot.init(session.workspace)
@@ -353,6 +366,7 @@ export class ACPServer {
         await wsDiff.snapshot(session.workspace)
 
         ACPProviderMeta()[session.id] = providerMeta
+        ACPAgentConfig()[session.id] = agentConfig
 
         const sessionId = session.id
         const partTypes = new Map<string, string>()
@@ -360,13 +374,62 @@ export class ACPServer {
 
         const unsubPartUpdated = Bus.subscribe(MessageV2.Event.PartUpdated, (event) => {
           const part = event.properties.part
-          if (part.sessionID !== sessionId) return
+
+          // Always record text/reasoning part types — needed for PartDelta routing
+          // regardless of which session the part belongs to.
+          if (part.type === "text") {
+            partTypes.set(part.id, "text")
+          } else if (part.type === "reasoning") {
+            partTypes.set(part.id, "reasoning")
+          }
+
+          if (part.sessionID !== sessionId) {
+            // Check if this is an event from a child (sub-agent) session
+            const childInfo = childSessionRegistry.get(part.sessionID)
+            if (!childInfo || childInfo.parentSessionID !== sessionId) return
+            if (part.type !== "tool") return
+            const subMeta = {
+              source: "subagent",
+              agent_name: childInfo.agentName,
+              tool_call_id: childInfo.toolCallId,
+              workspace: session.workspace,
+            }
+            if (part.state.status === "running") {
+              this._notify(ACP.toolCall(sessionId, part.callID, part.tool, (part.state.input ?? {}) as Record<string, unknown>, session.workspace, subMeta))
+            } else if (part.state.status === "completed") {
+              const { output: rawOutput, diff, structured: encodedStructured } = decodeToolOutput(part.state.output)
+              const structured = encodedStructured ?? projectStructuredToolPayload(part.tool, part.state.metadata)
+              this._notify(
+                ACP.toolCallUpdate(
+                  sessionId,
+                  part.callID,
+                  "completed",
+                  rawOutput,
+                  diff,
+                  subMeta,
+                  { path: (part.state.input?.filePath ?? part.state.input?.path ?? part.state.input?.file ?? "") as string },
+                  structured,
+                ),
+              )
+            } else if (part.state.status === "error") {
+              this._notify(
+                ACP.toolCallUpdate(
+                  sessionId,
+                  part.callID,
+                  "failed",
+                  { error: part.state.error },
+                  undefined,
+                  subMeta,
+                  { path: (part.state.input?.filePath ?? part.state.input?.path ?? part.state.input?.file ?? "") as string },
+                ),
+              )
+            }
+            return
+          }
+
           switch (part.type) {
             case "text":
-              partTypes.set(part.id, "text")
-              break
             case "reasoning":
-              partTypes.set(part.id, "reasoning")
               break
             case "tool": {
               if (part.state.status === "running") {
@@ -411,7 +474,21 @@ export class ACPServer {
 
         const unsubPartDelta = Bus.subscribe(MessageV2.Event.PartDelta, (event) => {
           const { sessionID, partID, delta } = event.properties
-          if (sessionID !== sessionId) return
+          if (sessionID !== sessionId) {
+            // Forward text/thought deltas from child sessions as sub-agent chunks
+            const childInfo = childSessionRegistry.get(sessionID)
+            if (!childInfo || childInfo.parentSessionID !== sessionId) return
+            const subMeta = {
+              source: "subagent",
+              agent_name: childInfo.agentName,
+              tool_call_id: childInfo.toolCallId,
+              workspace: session.workspace,
+            }
+            const partType = partTypes.get(partID)
+            if (partType === "text") this._notify(ACP.messageChunk(sessionId, delta, subMeta))
+            else if (partType === "reasoning") this._notify(ACP.thoughtChunk(sessionId, delta, subMeta))
+            return
+          }
           const partType = partTypes.get(partID)
           if (partType === "text") this._notify(ACP.messageChunk(sessionId, delta))
           else if (partType === "reasoning") this._notify(ACP.thoughtChunk(sessionId, delta))
@@ -469,6 +546,7 @@ export class ACPServer {
           unsubTodoUpdated()
           partTypes.clear()
           delete ACPProviderMeta()[session.id]
+          delete ACPAgentConfig()[session.id]
 
           // Workspace diff safety net: emit synthetic notifications for any
           // files changed during the turn (catches MCP tool writes, etc.)

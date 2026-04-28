@@ -19,6 +19,10 @@ export namespace ACP {
   export function toolKind(toolName: string): string {
     const name = (toolName || "").toLowerCase()
 
+    // Sub-agent dispatch via task tool
+    if (name === "task") {
+      return "subagent"
+    }
     // Sub-agent dispatch
     if (name.startsWith("call_") || name.includes("organizer") || name.includes("reviewer")) {
       return "think"
@@ -244,6 +248,7 @@ export namespace ACP {
     const cmd = relativizeText((rawInput.command ?? "") as string, workspace)
 
     switch (toolName) {
+      case "task": return (rawInput.description as string) || (rawInput.subagent_type as string) || "task"
       case "bash": return cmd ? `bash: ${String(cmd).slice(0, 60)}` : "bash"
       case "read": return filePath || "read"
       case "write": return filePath || "write"

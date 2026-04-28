@@ -12,6 +12,7 @@ import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { Permission } from "@/permission"
 import { NotFoundError } from "../storage/db"
+import { childSessionRegistry } from "../acp/subagent-registry"
 
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
@@ -131,6 +132,15 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           ],
         })
       })
+      // Register child session so server.ts can forward its ACP events with sub-agent _meta
+      childSessionRegistry.set(session.id, {
+        parentSessionID: ctx.sessionID,
+        toolCallId: ctx.callID ?? "",
+        agentName: agent.name,
+      })
+
+      try {
+
       const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
       if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
 
@@ -192,6 +202,10 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         title: params.description,
         metadata: resultMetadata,
         output,
+      }
+
+      } finally {
+        childSessionRegistry.delete(session.id)
       }
     },
   }

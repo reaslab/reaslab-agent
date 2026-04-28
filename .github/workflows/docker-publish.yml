@@ -2,7 +2,7 @@ name: Build and Publish Docker Image
 
 on:
   push:
-    branches: ["main", "v*"]
+    branches: ["main", "test_normal", "v*"]
     tags: ["v*.*.*"]
 
 env:
