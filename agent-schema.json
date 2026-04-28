@@ -1,10 +1,13 @@
 {
-  "bashTimeoutMs": {
-    "type": "number",
-    "title": "Bash Command Timeout (ms)",
-    "description": "Default timeout for bash commands in milliseconds. Commands exceeding this limit will be terminated.",
-    "default": 120000,
-    "minimum": 5000,
-    "maximum": 600000
+  "type": "object",
+  "properties": {
+    "bashTimeoutMs": {
+      "type": "number",
+      "title": "Bash Command Timeout (ms)",
+      "description": "Default timeout for bash commands in milliseconds. Commands exceeding this limit will be terminated.",
+      "default": 120000,
+      "minimum": 5000,
+      "maximum": 600000
+    }
   }
 }
