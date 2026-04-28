@@ -391,6 +391,9 @@ export class ACPServer {
             const subMeta = {
               source: "subagent",
               agent_name: childInfo.agentName,
+              agent_type: childInfo.agentName,
+              instance_name: childInfo.agentName,
+              instance_id: childInfo.toolCallId,
               tool_call_id: childInfo.toolCallId,
               workspace: session.workspace,
             }
@@ -481,6 +484,9 @@ export class ACPServer {
             const subMeta = {
               source: "subagent",
               agent_name: childInfo.agentName,
+              agent_type: childInfo.agentName,
+              instance_name: childInfo.agentName,
+              instance_id: childInfo.toolCallId,
               tool_call_id: childInfo.toolCallId,
               workspace: session.workspace,
             }
