@@ -1,4 +1,4 @@
-import { createOpenAI } from "@ai-sdk/openai"
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import type { LanguageModel } from "ai"
 import { createHash } from "crypto"
 import { NamedError } from "@opencode-ai/util/error"
@@ -91,33 +91,21 @@ export namespace Provider {
     const cached = cache.get(cacheKey)
     if (cached) return cached
 
-    const provider = createOpenAI({
+    // Use @ai-sdk/openai-compatible instead of @ai-sdk/openai because it properly handles
+    // DeepSeek's reasoning_content: parses delta.reasoning_content from the SSE stream and
+    // includes reasoning_content in outgoing assistant messages (required for tool calls in
+    // thinking mode, otherwise DeepSeek returns 400).
+    const provider = createOpenAICompatible({
       name: "reaslab",
       baseURL: meta.baseUrl,
       apiKey: meta.apiKey,
       fetch: async (input, init) => {
-        // @ai-sdk/openai v2 classifies any non-GPT model as a "reasoning model" and
-        // converts system messages to role:"developer". OpenAI-compatible endpoints
-        // (e.g. DeepSeek) reject that role. Rewrite developer→system in the outgoing request body.
-        if (init?.body && typeof init.body === "string") {
-          try {
-            const json = JSON.parse(init.body)
-            if (Array.isArray(json?.messages) && json.messages.some((m: any) => m.role === "developer")) {
-              json.messages = json.messages.map((m: any) =>
-                m.role === "developer" ? { ...m, role: "system" } : m,
-              )
-              init = { ...init, body: JSON.stringify(json) }
-            }
-          } catch {
-            // non-JSON body — leave unchanged
-          }
-        }
         const res = await fetch(input, init)
         return wrapSSE(res)
       },
     })
 
-    const model = provider.chat(meta.model)
+    const model = provider.chatModel(meta.model)
     cache.set(cacheKey, model)
     return model
   }
