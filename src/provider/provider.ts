@@ -96,6 +96,22 @@ export namespace Provider {
       baseURL: meta.baseUrl,
       apiKey: meta.apiKey,
       fetch: async (input, init) => {
+        // @ai-sdk/openai v2 classifies any non-GPT model as a "reasoning model" and
+        // converts system messages to role:"developer". OpenAI-compatible endpoints
+        // (e.g. DeepSeek) reject that role. Rewrite developer→system in the outgoing request body.
+        if (init?.body && typeof init.body === "string") {
+          try {
+            const json = JSON.parse(init.body)
+            if (Array.isArray(json?.messages) && json.messages.some((m: any) => m.role === "developer")) {
+              json.messages = json.messages.map((m: any) =>
+                m.role === "developer" ? { ...m, role: "system" } : m,
+              )
+              init = { ...init, body: JSON.stringify(json) }
+            }
+          } catch {
+            // non-JSON body — leave unchanged
+          }
+        }
         const res = await fetch(input, init)
         return wrapSSE(res)
       },
