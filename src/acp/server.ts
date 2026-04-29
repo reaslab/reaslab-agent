@@ -31,10 +31,16 @@ const PROTOCOL_VERSION = "0.1.0"
  * bash and MCP tools (python_mcp etc.) are NOT suppressed — be needs their rawOutput for
  * Python execution result extraction and Console panel notifications.
  */
-const SUPPRESSED_RAW_OUTPUT_TOOLS = new Set([
+const DEFAULT_SUPPRESSED_RAW_OUTPUT_TOOLS = new Set([
   "read", "glob", "grep", "ls", "codesearch",
   "write", "edit", "multiedit", "apply_patch",
+  "task", "skill",
 ])
+
+function resolveSuppressedTools(agentConfig: AgentConfig): Set<string> {
+  if (agentConfig.suppressRawOutput === false) return new Set()
+  return DEFAULT_SUPPRESSED_RAW_OUTPUT_TOOLS
+}
 
 function normalizeEmittedPath(pathValue: string, workspace?: string) {
   const originalNormalized = pathValue.replace(/\\+/g, "/")
@@ -239,6 +245,9 @@ export class ACPServer {
       if (typeof cfg.bashTimeoutMs === "number") {
         agentConfig.bashTimeoutMs = cfg.bashTimeoutMs
       }
+      if (typeof cfg.suppressRawOutput === "boolean") {
+        agentConfig.suppressRawOutput = cfg.suppressRawOutput
+      }
     }
 
     const turn = this.claimTurn(session)
@@ -381,6 +390,7 @@ export class ACPServer {
         ACPAgentConfig()[session.id] = agentConfig
 
         const sessionId = session.id
+        const suppressedTools = resolveSuppressedTools(agentConfig)
         const partTypes = new Map<string, string>()
         const emittedDiffPaths = new Set<string>()
 
@@ -414,7 +424,7 @@ export class ACPServer {
             } else if (part.state.status === "completed") {
               const { output: rawOutput, diff, structured: encodedStructured } = decodeToolOutput(part.state.output)
               const structured = encodedStructured ?? projectStructuredToolPayload(part.tool, part.state.metadata)
-              const suppressedOutput = SUPPRESSED_RAW_OUTPUT_TOOLS.has(part.tool) ? undefined : rawOutput
+              const suppressedOutput = suppressedTools.has(part.tool) ? undefined : rawOutput
               this._notify(
                 ACP.toolCallUpdate(
                   sessionId,
@@ -476,7 +486,7 @@ export class ACPServer {
                 const { output: rawOutput, diff, structured: encodedStructured } = decodeToolOutput(part.state.output)
                 const structured = encodedStructured ?? projectStructuredToolPayload(part.tool, part.state.metadata)
                 if (diff) emittedDiffPaths.add(normalizeEmittedPath(diff.path, session.workspace))
-                const suppressedOutput = SUPPRESSED_RAW_OUTPUT_TOOLS.has(part.tool) ? undefined : rawOutput
+                const suppressedOutput = suppressedTools.has(part.tool) ? undefined : rawOutput
                 this._notify(
                   ACP.toolCallUpdate(
                     sessionId,
