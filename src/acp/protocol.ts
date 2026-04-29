@@ -314,8 +314,12 @@ export namespace ACP {
           path: relativePath(diff.path, workspace),
         }
       : undefined
-    const outputText = textOutput(rawOutput, workspace)
-    const content = normalizedDiff ? [normalizedDiff] : [textContent(outputText)]
+    const outputText = rawOutput !== undefined ? textOutput(rawOutput, workspace) : ""
+    const content = normalizedDiff
+      ? [normalizedDiff]
+      : rawOutput !== undefined
+        ? [textContent(outputText)]
+        : []
     const locations = location?.path
       ? [{ path: relativePath(location.path, workspace) }]
       : normalizedDiff
@@ -325,7 +329,7 @@ export namespace ACP {
       sessionUpdate: "tool_call_update" as const,
       toolCallId,
       status,
-      rawOutput,
+      ...(rawOutput !== undefined ? { rawOutput } : {}),
       content,
       locations,
       ...(structured === undefined ? {} : { structured }),

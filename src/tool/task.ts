@@ -13,6 +13,7 @@ import { Config } from "../config/config"
 import { Permission } from "@/permission"
 import { NotFoundError } from "../storage/db"
 import { childSessionRegistry } from "../acp/subagent-registry"
+import { ACPProviderMeta } from "../acp/provider-meta"
 
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
@@ -149,6 +150,14 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         providerID: msg.info.providerID,
       }
 
+      // Propagate parent's provider meta (baseUrl, apiKey) to child session so the LLM
+      // call inside SessionPrompt.prompt() resolves the real endpoint instead of the
+      // dummy fallback (http://localhost:8080 / apiKey:"dummy").
+      const parentMeta = ACPProviderMeta()[ctx.sessionID]
+      if (parentMeta) {
+        ACPProviderMeta()[session.id] = { ...parentMeta, model: model.modelID }
+      }
+
       const messageID = MessageID.ascending()
 
       function cancel() {
@@ -206,6 +215,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
 
       } finally {
         childSessionRegistry.delete(session.id)
+        delete ACPProviderMeta()[session.id]
       }
     },
   }

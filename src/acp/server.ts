@@ -24,6 +24,18 @@ import { childSessionRegistry } from "./subagent-registry"
 
 const PROTOCOL_VERSION = "0.1.0"
 
+/**
+ * Tools whose rawOutput is suppressed from tool_call_update notifications sent to reaslab-be.
+ * - Read-only FS tools: output is verbose XML/text that be doesn't need
+ * - File-write tools: diff is already sent separately in content[diff]; rawOutput is redundant
+ * bash and MCP tools (python_mcp etc.) are NOT suppressed — be needs their rawOutput for
+ * Python execution result extraction and Console panel notifications.
+ */
+const SUPPRESSED_RAW_OUTPUT_TOOLS = new Set([
+  "read", "glob", "grep", "ls", "codesearch",
+  "write", "edit", "multiedit", "apply_patch",
+])
+
 function normalizeEmittedPath(pathValue: string, workspace?: string) {
   const originalNormalized = pathValue.replace(/\\+/g, "/")
   const normalized = path.resolve(workspace || process.cwd(), pathValue).replace(/\\+/g, "/")
@@ -402,12 +414,13 @@ export class ACPServer {
             } else if (part.state.status === "completed") {
               const { output: rawOutput, diff, structured: encodedStructured } = decodeToolOutput(part.state.output)
               const structured = encodedStructured ?? projectStructuredToolPayload(part.tool, part.state.metadata)
+              const suppressedOutput = SUPPRESSED_RAW_OUTPUT_TOOLS.has(part.tool) ? undefined : rawOutput
               this._notify(
                 ACP.toolCallUpdate(
                   sessionId,
                   part.callID,
                   "completed",
-                  rawOutput,
+                  suppressedOutput,
                   diff,
                   subMeta,
                   { path: (part.state.input?.filePath ?? part.state.input?.path ?? part.state.input?.file ?? "") as string },
@@ -463,12 +476,13 @@ export class ACPServer {
                 const { output: rawOutput, diff, structured: encodedStructured } = decodeToolOutput(part.state.output)
                 const structured = encodedStructured ?? projectStructuredToolPayload(part.tool, part.state.metadata)
                 if (diff) emittedDiffPaths.add(normalizeEmittedPath(diff.path, session.workspace))
+                const suppressedOutput = SUPPRESSED_RAW_OUTPUT_TOOLS.has(part.tool) ? undefined : rawOutput
                 this._notify(
                   ACP.toolCallUpdate(
                     sessionId,
                     part.callID,
                     "completed",
-                    rawOutput,
+                    suppressedOutput,
                     diff,
                     taskSubMeta ?? { workspace: session.workspace },
                     {
