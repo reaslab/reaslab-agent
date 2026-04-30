@@ -10,5 +10,5 @@ export declare namespace InstanceContext {
 }
 
 export class InstanceContext extends ServiceMap.Service<InstanceContext, InstanceContext.Shape>()(
-  "opencode/InstanceContext",
+  "reaslab-agent/InstanceContext",
 ) {}

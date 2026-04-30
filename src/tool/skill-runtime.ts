@@ -200,7 +200,7 @@ export function runtimeSkillHiddenRoot(directory: string, args: RuntimeScopeArgs
   const workspaceKey = String(args.workspaceID)
   return path.join(
     directory,
-    ".opencode",
+    ".reaslab",
     "runtime-skill-hidden",
     args.scope,
     workspaceKey,
@@ -436,5 +436,5 @@ export const UnloadSkillTool = Tool.define("unload-skill", {
 export const RuntimeSkillTools = [SkillFinderTool, LoadSkillTool, UnloadSkillTool] as const
 
 export function runtimeSkillToolsEnabled() {
-  return Flag.OPENCODE_ENABLE_QUESTION_TOOL || ["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT)
+  return Flag.REASLAB_ENABLE_QUESTION_TOOL || ["app", "cli", "desktop"].includes(Flag.REASLAB_CLIENT)
 }

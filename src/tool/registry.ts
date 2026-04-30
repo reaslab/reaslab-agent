@@ -33,7 +33,7 @@ import { Effect, Layer, ServiceMap } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRunPromise } from "@/effect/run-service"
 
-// Inline types for plugin system (package @opencode-ai/plugin not available)
+// Inline types for plugin system (package @reaslab-agent/plugin not available)
 interface PluginToolContext {
   directory: string
   worktree: string
@@ -61,7 +61,7 @@ export namespace ToolRegistry {
     ) => Effect.Effect<(Awaited<ReturnType<Tool.Info["init"]>> & { id: string })[]>
   }
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/ToolRegistry") {}
+  export class Service extends ServiceMap.Service<Service, Interface>()("@reaslab-agent/ToolRegistry") {}
 
   export const layer = Layer.effect(
     Service,
@@ -121,7 +121,7 @@ export namespace ToolRegistry {
 
       async function all(custom: Tool.Info[]): Promise<Tool.Info[]> {
         const cfg = await Config.get()
-        const question = ["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT) || Flag.OPENCODE_ENABLE_QUESTION_TOOL
+        const question = ["app", "cli", "desktop"].includes(Flag.REASLAB_CLIENT) || Flag.REASLAB_ENABLE_QUESTION_TOOL
 
         return [
           InvalidTool,
@@ -140,9 +140,9 @@ export namespace ToolRegistry {
           SkillTool,
           ...(runtimeSkillToolsEnabled() ? RuntimeSkillTools : []),
           ApplyPatchTool,
-          ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
+          ...(Flag.REASLAB_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
           ...((cfg as any).experimental?.batch_tool === true ? [BatchTool] : []),
-          ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
+          ...(Flag.REASLAB_EXPERIMENTAL_PLAN_MODE && Flag.REASLAB_CLIENT === "cli" ? [PlanExitTool] : []),
           ...custom,
         ]
       }
@@ -175,7 +175,7 @@ export namespace ToolRegistry {
               .filter((tool) => {
                 // Enable websearch/codesearch for zen users OR via enable flag
                 if (tool.id === "codesearch" || tool.id === "websearch") {
-                  return model.providerID === ProviderID.opencode || Flag.OPENCODE_ENABLE_EXA
+                  return model.providerID === ProviderID.reaslab || Flag.REASLAB_ENABLE_EXA
                 }
 
                 // use apply tool in same format as codex

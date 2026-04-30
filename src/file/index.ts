@@ -339,7 +339,7 @@ export namespace File {
     }) => Effect.Effect<string[]>
   }
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/File") {}
+  export class Service extends ServiceMap.Service<Service, Interface>()("@reaslab-agent/File") {}
 
   export const layer = Layer.effect(
     Service,

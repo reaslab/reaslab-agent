@@ -13,8 +13,8 @@
     "types": [],
     "paths": {
       "@/*": ["./src/*"],
-      "@opencode-ai/util/*": ["./src/util-pkg/*"],
-      "@opencode-ai/plugin": ["./src/plugin/index.ts"]
+      "@reaslab-agent/util/*": ["./src/util-pkg/*"],
+      "@reaslab-agent/plugin": ["./src/plugin/index.ts"]
     }
   },
   "include": ["src/**/*.ts"],

@@ -1,5 +1,4 @@
 // Stub: ConfigMarkdown utilities for reaslab-agent
-// Original is in opencode config module, not ported
 
 export namespace ConfigMarkdown {
   /** Extract @file references from a template string */

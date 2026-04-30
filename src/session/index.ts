@@ -1,4 +1,4 @@
-import { Slug } from "@opencode-ai/util/slug"
+import { Slug } from "@reaslab-agent/util/slug"
 import path from "path"
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
@@ -327,7 +327,7 @@ export namespace Session {
       )
     })
     const cfg = Config.get() as any
-    if (!result.parentID && (Flag.OPENCODE_AUTO_SHARE || cfg.share === "auto"))
+    if (!result.parentID && (Flag.REASLAB_AUTO_SHARE || cfg.share === "auto"))
       share(result.id).catch(() => {
         // Silently ignore sharing errors during session creation
       })
@@ -339,7 +339,7 @@ export namespace Session {
 
   export function plan(input: { slug: string; time: { created: number } }) {
     const base = Instance.project.vcs
-      ? path.join(Instance.worktree, ".opencode", "plans")
+      ? path.join(Instance.worktree, ".reaslab", "plans")
       : path.join(Global.Path.data, "plans")
     return path.join(base, [input.time.created, input.slug].join("-") + ".md")
   }
@@ -816,7 +816,7 @@ export namespace Session {
       // OpenRouter provides inputTokens as the total count of input tokens (including cached).
       // AFAIK other providers (OpenRouter/OpenAI/Gemini etc.) do it the same way e.g. vercel/ai#8794 (comment)
       // Anthropic does it differently though - inputTokens doesn't include cached tokens.
-      // It looks like OpenCode's cost calculation assumes all providers return inputTokens the same way Anthropic does (I'm guessing getUsage logic was originally implemented with anthropic), so it's causing incorrect cost calculation for OpenRouter and others.
+      // Cost calculation assumes all providers return inputTokens the same way Anthropic does (I'm guessing getUsage logic was originally implemented with anthropic), so it's causing incorrect cost calculation for OpenRouter and others.
       const excludesCachedTokens = !!(input.metadata?.["anthropic"] || input.metadata?.["bedrock"])
       const adjustedInputTokens = safe(
         excludesCachedTokens ? inputTokens : inputTokens - cacheReadInputTokens - cacheWriteInputTokens,

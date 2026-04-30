@@ -135,7 +135,7 @@ export namespace Permission {
     return evalRule(permission, pattern, ...rulesets)
   }
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Permission") {}
+  export class Service extends ServiceMap.Service<Service, Interface>()("@reaslab-agent/Permission") {}
 
   export const layer = Layer.effect(
     Service,

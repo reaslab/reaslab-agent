@@ -37,7 +37,7 @@ export namespace Config {
 
   let _config: AppConfig | undefined
 
-  /** Built-in agent definitions (matching opencode's defaults) */
+  /** Built-in agent definitions (default agent types) */
   const BUILTIN_AGENTS: AgentDef[] = [
     {
       id: "build",

@@ -17,27 +17,27 @@ const FILES = [
 
 function globalFiles() {
   const files = []
-  if (Flag.OPENCODE_CONFIG_DIR) {
-    files.push(path.join(Flag.OPENCODE_CONFIG_DIR, "REASLAB.md"))
+  if (Flag.REASLAB_CONFIG_DIR) {
+    files.push(path.join(Flag.REASLAB_CONFIG_DIR, "REASLAB.md"))
   }
   files.push(path.join(Global.Path.config, "REASLAB.md"))
-  if (!Flag.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT) {
+  if (!Flag.REASLAB_DISABLE_CLAUDE_CODE_PROMPT) {
     files.push(path.join(os.homedir(), ".claude", "CLAUDE.md"))
   }
   return files
 }
 
 async function resolveRelative(instruction: string): Promise<string[]> {
-  if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
+  if (!Flag.REASLAB_DISABLE_PROJECT_CONFIG) {
     return Filesystem.globUp(instruction, Instance.directory, Instance.worktree).catch(() => [])
   }
-  if (!Flag.OPENCODE_CONFIG_DIR) {
+  if (!Flag.REASLAB_CONFIG_DIR) {
     log.warn(
-      `Skipping relative instruction "${instruction}" - no OPENCODE_CONFIG_DIR set while project config is disabled`,
+      `Skipping relative instruction "${instruction}" - no REASLAB_CONFIG_DIR set while project config is disabled`,
     )
     return []
   }
-  return Filesystem.globUp(instruction, Flag.OPENCODE_CONFIG_DIR, Flag.OPENCODE_CONFIG_DIR).catch(() => [])
+  return Filesystem.globUp(instruction, Flag.REASLAB_CONFIG_DIR, Flag.REASLAB_CONFIG_DIR).catch(() => [])
 }
 
 export namespace InstructionPrompt {
@@ -71,7 +71,7 @@ export namespace InstructionPrompt {
     const config = await Config.get()
     const paths = new Set<string>()
 
-    if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
+    if (!Flag.REASLAB_DISABLE_PROJECT_CONFIG) {
       for (const file of FILES) {
         const matches = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
         if (matches.length > 0) {

@@ -1,7 +1,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import type { LanguageModel } from "ai"
 import { createHash } from "crypto"
-import { NamedError } from "@opencode-ai/util/error"
+import { NamedError } from "@reaslab-agent/util/error"
 import z from "zod"
 import { ModelID, ProviderID } from "./schema"
 
@@ -124,7 +124,7 @@ export namespace Provider {
     cache.clear()
   }
 
-  // --- Compatibility shims for code ported from opencode ---
+  // --- Compatibility shims for provider abstraction ---
   // These are used by session/prompt.ts and other modules that reference the old Provider API.
 
   /** Error thrown when a model is not found */

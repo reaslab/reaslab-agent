@@ -3,7 +3,7 @@ import os from "os"
 import path from "path"
 import z from "zod"
 import { Effect, Layer, ServiceMap } from "effect"
-import { NamedError } from "@opencode-ai/util/error"
+import { NamedError } from "@reaslab-agent/util/error"
 import type { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
 import type { WorkspaceID } from "@/control-plane/schema"
@@ -26,7 +26,7 @@ export namespace Skill {
   const log = Log.create({ service: "skill" })
   const EXTERNAL_DIRS = [".claude", ".agents"]
   const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
-  const OPENCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
+  const REASLAB_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
   const SKILL_PATTERN = "**/SKILL.md"
 
   export const DEFAULT_MAX_SKILL_FILE_BYTES = 256_000
@@ -624,7 +624,7 @@ export namespace Skill {
     }
 
     const load = async () => {
-      if (!Flag.OPENCODE_DISABLE_EXTERNAL_SKILLS) {
+      if (!Flag.REASLAB_DISABLE_EXTERNAL_SKILLS) {
         for (const dir of EXTERNAL_DIRS) {
           const root = path.join(Global.Path.home, dir)
           if (!(await Filesystem.isDir(root))) continue
@@ -642,7 +642,7 @@ export namespace Skill {
 
       // Config.directories() not available in reaslab-agent
       // for (const dir of await Config.directories()) {
-      //   await scan(state, dir, OPENCODE_SKILL_PATTERN)
+      //   await scan(state, dir, REASLAB_SKILL_PATTERN)
       // }
 
       // Scan built-in skills directory (packaged in Docker image at /app/skills)
@@ -721,7 +721,7 @@ export namespace Skill {
     return { ...state, ensure }
   }
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Skill") {}
+  export class Service extends ServiceMap.Service<Service, Interface>()("@reaslab-agent/Skill") {}
 
   export const layer: Layer.Layer<Service, never, Discovery.Service> = Layer.effect(
     Service,

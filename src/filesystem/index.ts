@@ -28,7 +28,7 @@ export namespace AppFileSystem {
     readonly globMatch: (pattern: string, filepath: string) => boolean
   }
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/FileSystem") {}
+  export class Service extends ServiceMap.Service<Service, Interface>()("@reaslab-agent/FileSystem") {}
 
   export const layer = Layer.effect(
     Service,

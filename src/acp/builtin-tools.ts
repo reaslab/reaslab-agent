@@ -1,4 +1,4 @@
-// Adapter: converts opencode Tool.Info to Vercel AI SDK ToolSet
+// Adapter: converts agent Tool.Info to Vercel AI SDK ToolSet
 // Used to inject built-in tools (bash, read, write, etc.) into the agent loop
 
 import { tool, type ToolSet } from "ai"

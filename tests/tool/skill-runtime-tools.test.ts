@@ -859,7 +859,7 @@ describe("runtime skill tools", () => {
     ).toBe(
       path.join(
         root,
-        ".opencode",
+        ".reaslab",
         "runtime-skill-hidden",
         "session",
         String(customWorkspaceID),
@@ -875,7 +875,7 @@ describe("runtime skill tools", () => {
     ).toBe(
       path.join(
         root,
-        ".opencode",
+        ".reaslab",
         "runtime-skill-hidden",
         "workspace",
         String(customWorkspaceID),

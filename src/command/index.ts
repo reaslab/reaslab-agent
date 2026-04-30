@@ -88,7 +88,7 @@ export namespace Command {
     readonly list: (scope?: Scope) => Effect.Effect<Info[]>
   }
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Command") {}
+  export class Service extends ServiceMap.Service<Service, Interface>()("@reaslab-agent/Command") {}
 
   export const layer = Layer.effect(
     Service,
